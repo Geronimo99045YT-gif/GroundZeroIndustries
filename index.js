@@ -16,6 +16,7 @@ const {
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const fs   = require('fs');
 const path = require('path');
+const { setBotClient } = require('./server');
 
 // ─── Config (log channel stored in config.json) ───────────────────────────────
 
@@ -454,6 +455,7 @@ const client = new Client({
 
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
+  setBotClient(client);
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
