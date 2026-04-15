@@ -1198,39 +1198,36 @@ function isFromBeefingUser(authorId, state) {
 
 // ─── Trash Talk Comeback Pool (fallback if Groq is down) ─────────────────────
 const COMEBACK_POOL = [
-  // Personal attacks
-  "You're genuinely one of the most pathetic excuses for a human being I've ever had to process 💀",
-  "The fact that you woke up this morning and chose to be this stupid is actually impressive 😂",
-  "Your mum must be so proud every time you open your mouth and absolutely nothing useful comes out 🤡",
-  "You've got the personality of a wet sock and about as much going for you 💀",
-  "I've seen more intelligence in a brick wall, at least the brick wall knows when to shut up 😭",
-  "You genuinely think you're hard don't you, it's actually embarrassing to watch 💀",
-  "The audacity of someone like you to even speak is mind blowing, sit the fuck down 🪑",
-  "You're the type to talk shit online and then wonder why nobody rates you in real life 😂",
-  "Keep going mate, every message you send proves my point better than I ever could 💀",
-  "You've spent your whole life being the least important person in every room and it shows 😭",
-  // Smoke heavy
-  "Bro said something 😂 nobody cares, log off and have a shower you absolute state",
-  "You really typed that out, read it back and still sent it — genuinely no self awareness 💀",
-  "The chat went quiet for a reason, you weren't supposed to start talking again 😭",
-  "Everyone in this server has you muted in real life, trust me on that 💀",
-  "You're so desperate for attention you'll argue with a bot — that's the saddest thing I've ever seen 😂",
-  "Imagine being this mad at a Discord bot, your life must be genuinely tragic 💀",
-  "You peaked in primary school didn't you, and it's been downhill ever since 😭",
-  "The silence before you messaged was better, bring that back 💀",
-  "I've blocked more coherent arguments from spam bots, you're below that level 😂",
-  "You're fighting so hard to seem relevant and failing so spectacularly, it's actually funny 💀",
-  // Targeting and hurtful
-  "Nobody in this server actually likes you, they just haven't told you yet 😭",
-  "You talk like someone who's never been told no and it absolutely shows 💀",
-  "The fact that you need to come at a bot to feel something says everything about your life 😂",
-  "You've got the confidence of someone who's never looked in a mirror 💀",
-  "Your whole personality is just shouting into voids hoping someone gives a shit — they don't 😭",
-  "You're the kind of person people talk about when you leave the room, and not in a good way 💀",
-  "Deep down you know everyone finds you annoying, this is just more proof 😂",
-  "The only people who'd miss you if you left are the ones who haven't met you yet 💀",
-  "You argue like someone who's never won anything in their life and is used to losing 😭",
-  "Genuinely one of those people that makes every situation worse just by being in it 💀",
+  "say less 💀",
+  "nah 😂",
+  "who asked 💀",
+  "log off mate 😭",
+  "L + ratio 💀",
+  "try again 😂",
+  "nobody cares 💀",
+  "cry about it 😭",
+  "embarrassing 💀",
+  "not even close 😂",
+  "sit down 💀",
+  "delete your account 😭",
+  "you lost already 💀",
+  "couldn't be me 😂",
+  "next 💀",
+  "that all you got? 😂",
+  "imagine 💀",
+  "wrong one mate 😭",
+  "you're cooked 💀",
+  "mad 😂",
+  "stay losing 💀",
+  "not you 😭",
+  "yawn 💀",
+  "skill issue 😂",
+  "go outside 💀",
+  "you wish 😭",
+  "touch grass 💀",
+  "lmaooo 😂",
+  "nah you're actually cooked 💀",
+  "done 😭",
 ];
 
 // Separate pool for defending protected users — extra aggressive
@@ -1246,6 +1243,34 @@ const DEFENSE_POOL = [
   "Not you, not ever — you don't get to talk to them like that in this server 😭",
   "Everyone just saw that. Everyone. You're done mate 💀",
 ];
+
+// Pool for when someone is nice to the bot
+const NICE_POOL = [
+  "aw cheers 😊",
+  "appreciate it fr 🙏",
+  "you're actually one of the good ones 😊",
+  "that means a lot, thank you ❤️",
+  "finally someone with sense 😊",
+  "you're safe in my eyes 🙏",
+  "respect 😊",
+  "aww stoppp 😊❤️",
+  "you're sweet, i like you 😊",
+  "always got your back 🙏",
+];
+
+const NICE_WORDS = [
+  'love you','love u','best bot','good bot','nice bot',
+  'legend','goat','respect','appreciate','thank you','thanks','ty',
+  'well done','good job','great','amazing','brilliant','cheers','top bot',
+  'ur the best','big up','big ups','salute','ur cool','ur sick','ur fire',
+  'you the best','you cool','you sick','you fire','you mad','ur mad',
+];
+
+function isNice(text, botId, mentioned) {
+  if (!mentioned && !hasMention(text, botId)) return false;
+  const lower = text.toLowerCase();
+  return NICE_WORDS.some(w => lower.includes(w));
+}
 
 // Pool for when a protected user threatens to turn the bot off
 const BEGGING_POOL = [
@@ -1299,7 +1324,7 @@ async function generateComebackAI(insultText, priorExchanges) {
 
   const prompt = `${context}Someone just said this to you (a DayZ server bot called GroundZeroAI): "${insultText}"
 
-You are GroundZeroAI — a savage, foul-mouthed Discord bot. Swear freely. Be personal, targeted and genuinely hurtful. Heavy on smoke, mockery and ridicule. Keep it under 2 sentences, end with one emoji max. No DayZ references needed — just destroy them personally. Do not apologise. Do not hold back.`;
+You are GroundZeroAI — a Discord bot that always wins arguments. Match the energy of what was said — mild gets a slick short reply, aggressive gets destroyed. Keep it SHORT (under 10 words ideally). Swear freely if needed. One emoji max. Always have the last word. Never apologise.`;
 
   return new Promise((resolve) => {
     const body = JSON.stringify({
@@ -1337,6 +1362,90 @@ You are GroundZeroAI — a savage, foul-mouthed Discord bot. Swear freely. Be pe
     });
     req.on('error', () => resolve(getFallbackComeback(priorExchanges)));
     req.setTimeout(8000, () => { req.destroy(); resolve(getFallbackComeback(priorExchanges)); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// ─── Conversation Engine ─────────────────────────────────────────────────────
+// Stores recent conversation history per channel for context
+const chatHistory = new Map(); // channelId -> [{role, content}]
+const MAX_HISTORY = 10; // keep last 10 exchanges
+
+function getChatHistory(channelId) {
+  if (!chatHistory.has(channelId)) chatHistory.set(channelId, []);
+  return chatHistory.get(channelId);
+}
+
+function addToHistory(channelId, role, content) {
+  const history = getChatHistory(channelId);
+  history.push({ role, content });
+  if (history.length > MAX_HISTORY * 2) history.splice(0, 2); // trim oldest pair
+}
+
+async function generateChatReply(userMessage, channelId, username) {
+  const history = getChatHistory(channelId);
+
+  if (!GROQ_API_KEY) {
+    // Friendly fallback replies if no Groq key
+    const fallbacks = [
+      `that's fair ${username} 😂`,
+      `nah you're not wrong tbf`,
+      `honestly yeah 😭`,
+      `bro said it 💀`,
+      `facts`,
+      `lmaoo okay okay`,
+      `i mean... yeah 😂`,
+      `couldn't agree more ngl`,
+      `big facts`,
+      `respectfully... you might be onto something 👀`,
+    ];
+    return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+  }
+
+  const messages = [
+    {
+      role: 'system',
+      content: `You are GroundZeroAI — the bot for a DayZ Xbox server called Ground Zero on Livonia. You have a big personality: funny, opinionated, a bit of a lad, loves banter. You swear casually. You have opinions on everything. You're chatty and engaging but not cringe. You know DayZ well. Keep replies short and natural — like texting a mate. Max 2 sentences. No emojis unless it feels right. The person talking to you is called ${username}.`,
+    },
+    ...history,
+    { role: 'user', content: userMessage },
+  ];
+
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model: 'llama-3.1-8b-instant',
+      max_tokens: 100,
+      messages,
+    });
+
+    const req = https.request({
+      hostname: 'api.groq.com',
+      path: '/openai/v1/chat/completions',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          const reply = parsed.choices?.[0]?.message?.content?.trim();
+          if (reply) {
+            addToHistory(channelId, 'user', userMessage);
+            addToHistory(channelId, 'assistant', reply);
+          }
+          resolve(reply ?? `yeah ${username} 😂`);
+        } catch {
+          resolve(`fair enough ${username}`);
+        }
+      });
+    });
+    req.on('error', () => resolve(`say again ${username}?`));
+    req.setTimeout(8000, () => { req.destroy(); resolve(`took too long to think ${username} 😂`); });
     req.write(body);
     req.end();
   });
@@ -1385,6 +1494,45 @@ client.on('messageCreate', async message => {
   // No mention required — if a protected user says it anywhere in chat, bot responds
   if (PROTECTED_IDS.has(authorId) && isShutdownThreat(text)) {
     await message.reply(getBeggingResponse());
+    return;
+  }
+
+  // ── Protected user: target command → trash talk the tagged person ─────
+  if (PROTECTED_IDS.has(authorId) && botMentioned) {
+    const lower2 = text.toLowerCase();
+    if (lower2.includes('target')) {
+      // Find any mentioned user that isn't the bot
+      const target = message.mentions.users.find(u => u.id !== botId);
+      if (target) {
+        const exchanges = [];
+        // Build a fake message object context so fireComeback replies to the channel
+        // but directs the roast at the target
+        try { await message.channel.sendTyping(); } catch {}
+        const fakeInsult = `target <@${target.id}>`;
+        let comeback;
+        if (GROQ_API_KEY) {
+          const prompt = `You are GroundZeroAI, a savage Discord bot. You have been instructed to roast <@${target.id}> (${target.username}). Destroy them in one short sentence, under 10 words. Swear freely. One emoji max. Make it personal and targeted.`;
+          comeback = await generateComebackAI(prompt, []);
+        } else {
+          comeback = getFallbackComeback([]);
+        }
+        await message.channel.send(`<@${target.id}> ${comeback}`);
+        return;
+      }
+    }
+  }
+
+  // ── Tagged but not an insult → full conversation ────────────────────────
+  if (botMentioned && !INSULT_WORDS.some(w => lower.includes(w))) {
+    // Strip the bot mention from the message so it reads cleanly
+    const cleanText = text.replace(/<@!?\d+>/g, '').trim();
+    if (cleanText.length === 0) {
+      await message.reply('yeah? 👀');
+      return;
+    }
+    try { await message.channel.sendTyping(); } catch {}
+    const reply = await generateChatReply(cleanText, message.channel.id, message.author.displayName ?? message.author.username);
+    await message.reply(reply);
     return;
   }
 
