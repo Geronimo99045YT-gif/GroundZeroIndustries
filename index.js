@@ -417,7 +417,6 @@ const commands = [
     .setDescription('Set the DayZ Xbox server info shown to players who ask how to join')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addStringOption(o => o.setName('name').setDescription('Server name as it appears in DayZ').setRequired(true))
-    .addStringOption(o => o.setName('gamertag').setDescription('Host gamertag players need to follow').setRequired(true))
     .addStringOption(o => o.setName('password').setDescription('Server password (leave blank if none)'))
     .addStringOption(o => o.setName('extra').setDescription('Any extra join instructions')),
 
@@ -578,12 +577,14 @@ function modEmbed(title, color, target, moderator, reason, extra = []) {
   return new EmbedBuilder()
     .setTitle(title)
     .setColor(color)
+    .setThumbnail(target.user.displayAvatarURL())
     .addFields(
-      { name: 'User',      value: `${target.user.tag} (${target.id})`, inline: true },
-      { name: 'Moderator', value: moderator.tag,                        inline: true },
+      { name: '👤 User',      value: `<@${target.id}>\n\`${target.user.tag}\``, inline: true },
+      { name: '🛡️ Moderator', value: `<@${moderator.id}>\n\`${moderator.tag}\``, inline: true },
       ...extra,
-      { name: 'Reason',    value: reason },
+      { name: '📝 Reason',   value: reason },
     )
+    .setFooter({ text: `User ID: ${target.id}` })
     .setTimestamp();
 }
 
@@ -599,14 +600,15 @@ client.on('interactionCreate', async interaction => {
     const rule     = interaction.options.getString('rule').trim();
     const num      = addRule(guild.id, category, rule);
     const embed = new EmbedBuilder()
-      .setTitle('✅ Rule Added')
-      .setColor(Colors.Green)
+      .setTitle('✅  Rule Added')
+      .setColor(0x57F287)
+      .setDescription(`> Rule added to **${category.charAt(0).toUpperCase() + category.slice(1)}**.`)
       .addFields(
-        { name: 'Category', value: category.charAt(0).toUpperCase() + category.slice(1), inline: true },
-        { name: 'Rule #',   value: `${num}`, inline: true },
-        { name: 'Text',     value: rule },
+        { name: '📂 Category', value: category.charAt(0).toUpperCase() + category.slice(1), inline: true },
+        { name: '#️⃣ Rule No.',  value: `${num}`, inline: true },
+        { name: '📝 Rule Text', value: rule },
       )
-      .setFooter({ text: 'Run /postrules to update the rules channel.' })
+      .setFooter({ text: 'Run /postrules to refresh the rules channel.' })
       .setTimestamp();
     await interaction.reply({ embeds: [embed], ephemeral: true });
 
@@ -622,10 +624,10 @@ client.on('interactionCreate', async interaction => {
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
-          .setTitle('🗑️ Rule Removed')
-          .setColor(Colors.Orange)
-          .setDescription(`Rule #${number} from **${category}** has been removed.`)
-          .setFooter({ text: 'Run /postrules to update the rules channel.' })
+          .setTitle('🗑️  Rule Removed')
+          .setColor(0xE67E22)
+          .setDescription(`> Rule **#${number}** from **${category}** has been deleted.`)
+          .setFooter({ text: 'Run /postrules to refresh the rules channel.' })
           .setTimestamp(),
       ],
       ephemeral: true,
@@ -636,13 +638,22 @@ client.on('interactionCreate', async interaction => {
     const rules  = getRules(guild.id);
     const embeds = buildRulesEmbeds(rules);
     if (!embeds) {
-      await interaction.reply({ content: 'No rules have been set yet. An admin can add rules with `/addrule`.', ephemeral: true });
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('⚠️  No Rules Set')
+            .setColor(0xFEE75C)
+            .setDescription('> No rules have been added yet.\n> An admin can add rules with `/addrule [category] [rule]`.'),
+        ],
+        ephemeral: true,
+      });
       return;
     }
     const header = new EmbedBuilder()
       .setTitle('📜  Server Rules')
-      .setDescription('Read and follow the rules below. Ignorance is not an excuse.')
+      .setDescription('> Read and follow all rules listed below.\n> **Ignorance is not an excuse.** Rule breakers will be moderated.')
       .setColor(0x8B0000)
+      .setFooter({ text: '🪖 DayZ Console Bot' })
       .setTimestamp();
     await interaction.reply({ embeds: [header, ...embeds] });
 
@@ -653,9 +664,10 @@ client.on('interactionCreate', async interaction => {
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
-          .setTitle('✅ Rules Channel Set')
-          .setColor(Colors.Green)
-          .setDescription(`Rules will be posted to ${channel}.\nRun \`/postrules\` to post them now.`)
+          .setTitle('✅  Rules Channel Set')
+          .setColor(0x57F287)
+          .setDescription(`> Rules will be posted to ${channel}.\n> Run \`/postrules\` to publish them now.`)
+          .setFooter({ text: 'Use /postrules any time to refresh the channel.' })
           .setTimestamp(),
       ],
       ephemeral: true,
@@ -666,15 +678,22 @@ client.on('interactionCreate', async interaction => {
     await interaction.deferReply({ ephemeral: true });
     const success = await postRulesToChannel(guild);
     if (!success) {
-      await interaction.editReply({ content: 'Failed — make sure you have set a rules channel with `/setruleschannel` and that rules exist.' });
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('❌  Failed to Post Rules')
+            .setColor(0xED4245)
+            .setDescription('> Make sure you have:\n> • Set a rules channel with `/setruleschannel`\n> • Added at least one rule with `/addrule`'),
+        ],
+      });
       return;
     }
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
-          .setTitle('✅ Rules Posted')
-          .setColor(Colors.Green)
-          .setDescription('Rules channel has been updated.')
+          .setTitle('✅  Rules Published')
+          .setColor(0x57F287)
+          .setDescription('> The rules channel has been refreshed successfully.')
           .setTimestamp(),
       ],
     });
@@ -682,19 +701,18 @@ client.on('interactionCreate', async interaction => {
   // /setserver
   } else if (commandName === 'setserver') {
     const name     = interaction.options.getString('name');
-    const gamertag = interaction.options.getString('gamertag');
     const password = interaction.options.getString('password') ?? null;
     const extra    = interaction.options.getString('extra')    ?? null;
-    setServerInfo(guild.id, { name, gamertag, password, extra });
+    setServerInfo(guild.id, { name, password, extra });
     const embed = new EmbedBuilder()
       .setTitle('✅ Server Info Saved')
-      .setColor(Colors.Green)
+      .setColor(0x57F287)
+      .setDescription('> Players who ask how to join will now get the info automatically.')
       .addFields(
-        { name: 'Server Name', value: name,     inline: true },
-        { name: 'Gamertag',    value: gamertag, inline: true },
-        { name: 'Password',    value: password ?? 'None', inline: true },
+        { name: '🖥️ Server Name', value: `\`${name}\``, inline: true },
+        { name: '🔒 Password',    value: password ? `\`${password}\`` : 'None', inline: true },
       )
-      .setDescription('Players who ask how to join will now get this info automatically, and `/join` will show it.')
+      .setFooter({ text: 'Use /join to preview how it looks.' })
       .setTimestamp();
     await interaction.reply({ embeds: [embed], ephemeral: true });
 
@@ -705,9 +723,9 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle('⚠️ Server info not set up yet')
-            .setColor(Colors.Yellow)
-            .setDescription('An admin needs to run `/setserver` first to configure the server details.'),
+            .setTitle('⚠️  Server Not Configured')
+            .setColor(0xFEE75C)
+            .setDescription('> No server info has been set up yet.\n> An admin needs to run `/setserver` first.'),
         ],
         ephemeral: true,
       });
@@ -720,18 +738,19 @@ client.on('interactionCreate', async interaction => {
     const channel = interaction.options.getChannel('channel');
     setLogChannel(guild.id, channel.id);
     const embed = new EmbedBuilder()
-      .setTitle('✅ Log Channel Set')
-      .setColor(Colors.Green)
-      .setDescription(`Mod actions will now be logged in ${channel}.`)
+      .setTitle('✅  Log Channel Set')
+      .setColor(0x57F287)
+      .setDescription(`> Mod actions will now be logged in ${channel}.`)
       .setFooter({ text: `Set by ${user.tag}` })
       .setTimestamp();
     await interaction.reply({ embeds: [embed], ephemeral: true });
     channel.send({
       embeds: [
         new EmbedBuilder()
-          .setTitle('📋 Log Channel Activated')
-          .setColor(Colors.Green)
-          .setDescription(`This channel has been set as the mod log channel by ${user.tag}.`)
+          .setTitle('📋  Mod Log Channel')
+          .setColor(0x5865F2)
+          .setDescription('This channel has been configured as the **mod action log**.\nAll kicks, bans, mutes and warnings will appear here.')
+          .setFooter({ text: `Configured by ${user.tag}` })
           .setTimestamp(),
       ],
     }).catch(() => {});
@@ -739,14 +758,16 @@ client.on('interactionCreate', async interaction => {
   // /logchannel
   } else if (commandName === 'logchannel') {
     const channelId = getLogChannel(guild.id);
-    const embed = new EmbedBuilder().setColor(0x8B0000).setTimestamp();
+    const embed = new EmbedBuilder().setColor(0x5865F2).setTimestamp();
     if (channelId) {
       const ch = guild.channels.cache.get(channelId);
-      embed.setTitle('📋 Current Log Channel')
-           .setDescription(ch ? `Logs are being sent to ${ch}.` : `Channel ID \`${channelId}\` is set but no longer exists. Use /setlogchannel to update it.`);
+      embed.setTitle('📋  Mod Log Channel')
+           .setDescription(ch
+             ? `Logs are being sent to ${ch}.`
+             : `> ⚠️ Channel ID \`${channelId}\` is set but no longer exists.\n> Run \`/setlogchannel\` to update it.`);
     } else {
-      embed.setTitle('📋 No Log Channel Set')
-           .setDescription('Use `/setlogchannel #channel` to configure one.');
+      embed.setTitle('📋  No Log Channel Set')
+           .setDescription('> No log channel configured yet.\n> Use `/setlogchannel #channel` to set one.');
     }
     await interaction.reply({ embeds: [embed], ephemeral: true });
 
@@ -759,10 +780,11 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle('❌ Item not found')
-            .setColor(Colors.Red)
-            .setDescription(`No item matching **${query}** was found.\nUse the exact classname, e.g. \`AK74\`, \`BandageDressing\`, \`M4A1\`.`)
-            .setFooter({ text: 'Search is case-insensitive' }),
+            .setTitle('❌  Item Not Found')
+            .setColor(0xED4245)
+            .setDescription(`> No item matching **${query}** was found in the loot table.`)
+            .addFields({ name: '💡 Examples', value: '`AK74`  `M4A1`  `BandageDressing`  `SalineIVBag`  `Jeans_Blue`' })
+            .setFooter({ text: 'Search is case-insensitive  •  Use exact classnames' }),
         ],
         ephemeral: true,
       });
@@ -774,10 +796,11 @@ client.on('interactionCreate', async interaction => {
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle(`🔍 Multiple matches for "${query}"`)
-            .setColor(0x8B0000)
-            .setDescription(results.map(r => `• \`${r.name}\``).join('\n'))
-            .setFooter({ text: 'Try a more specific name' }),
+            .setTitle(`🔍  Multiple Matches`)
+            .setColor(0xFEE75C)
+            .setDescription(`Found **${results.length}** items matching \`${query}\` — pick the exact one:`)
+            .addFields({ name: 'Matches', value: results.map(r => `> \`${r.name}\``).join('\n') })
+            .setFooter({ text: 'Re-run /loot with the exact classname' }),
         ],
         ephemeral: true,
       });
@@ -799,10 +822,11 @@ client.on('interactionCreate', async interaction => {
     const tierStr  = (data.t || []).map(t => TIER_LABEL[t] || t).join(', ') || 'All tiers';
     const emoji    = CATEGORY_EMOJI[data.c] || '❓';
 
-    let rarity = '🟢 Common';
-    if      (data.n < 5)  rarity = '🔴 Very Rare';
-    else if (data.n < 20) rarity = '🟠 Rare';
-    else if (data.n < 50) rarity = '🟡 Uncommon';
+    let rarity, rarityColor;
+    if      (data.n < 5)  { rarity = '🔴  Very Rare';  rarityColor = 0xED4245; }
+    else if (data.n < 20) { rarity = '🟠  Rare';        rarityColor = 0xE67E22; }
+    else if (data.n < 50) { rarity = '🟡  Uncommon';    rarityColor = 0xFEE75C; }
+    else                  { rarity = '🟢  Common';       rarityColor = 0x57F287; }
 
     // Generate heatmap image
     let attachment = null;
@@ -817,19 +841,20 @@ client.on('interactionCreate', async interaction => {
 
     const embed = new EmbedBuilder()
       .setTitle(`${emoji}  ${prettyName(name)}`)
-      .setColor(0x8B0000)
+      .setColor(rarityColor)
+      .setDescription(`**Classname:** \`${name}\``)
       .addFields(
-        { name: 'Category',       value: data.c ? data.c.charAt(0).toUpperCase() + data.c.slice(1) : 'Unknown', inline: true },
-        { name: 'Max in World',   value: `${data.n}`, inline: true },
-        { name: 'Rarity',         value: rarity,      inline: true },
-        { name: 'Spawn Zones',    value: tierStr,      inline: false },
-        { name: 'Location Types', value: usageStr,     inline: false },
+        { name: '📦 Category',      value: data.c ? data.c.charAt(0).toUpperCase() + data.c.slice(1) : 'Unknown', inline: true },
+        { name: '🌍 Max in World',  value: `${data.n}`, inline: true },
+        { name: '⭐ Rarity',        value: rarity,      inline: true },
+        { name: '🗺️ Spawn Zones',   value: tierStr,     inline: false },
+        { name: '🏠 Locations',     value: usageStr,    inline: false },
       )
-      .setFooter({ text: `Classname: ${name}  •  Livonia (Enoch)` })
+      .setFooter({ text: '🪖 DayZ Console Bot  •  Livonia (Enoch)  •  Heatmap below' })
       .setTimestamp();
 
     if (tierLines.length > 0) {
-      embed.addFields({ name: '📍 Spawn Slots by Zone', value: tierLines.join('\n') });
+      embed.addFields({ name: '📍  Slot Count by Zone', value: tierLines.join('\n') });
     }
 
     if (attachment) {
@@ -841,26 +866,38 @@ client.on('interactionCreate', async interaction => {
 
   // /ping
   } else if (commandName === 'ping') {
-    await interaction.reply({ content: `🏓 Pong! Latency: **${client.ws.ping}ms**`, ephemeral: true });
+    const pingEmbed = new EmbedBuilder()
+      .setTitle('🏓  Pong!')
+      .setColor(client.ws.ping < 100 ? 0x57F287 : client.ws.ping < 250 ? 0xFEE75C : 0xED4245)
+      .addFields({ name: 'Websocket Latency', value: `\`${client.ws.ping}ms\``, inline: true })
+      .setTimestamp();
+    await interaction.reply({ embeds: [pingEmbed], ephemeral: true });
 
   // /roll
   } else if (commandName === 'roll') {
     const sides  = interaction.options.getInteger('sides') ?? 6;
     const result = Math.floor(Math.random() * sides) + 1;
-    await interaction.reply(`🎲 **${user.username}** rolled a **${result}** (d${sides})`);
+    const rollEmbed = new EmbedBuilder()
+      .setTitle('🎲  Dice Roll')
+      .setColor(0x9B59B6)
+      .setDescription(`**${user.displayName ?? user.username}** rolled a **d${sides}** and got...\n# ${result}`)
+      .setFooter({ text: sides === 6 ? 'Classic d6' : `d${sides}` })
+      .setTimestamp();
+    await interaction.reply({ embeds: [rollEmbed] });
 
   // /tips
   } else if (commandName === 'tips') {
-    const embed = new EmbedBuilder()
-      .setTitle('📚 DayZ Console — Tip Categories')
-      .setColor(0x8B0000)
+    const tipsEmbed = new EmbedBuilder()
+      .setTitle('📚  Tip Categories')
+      .setColor(0x5865F2)
       .setDescription(
         Object.keys(tips)
-          .map(k => `• **${k.charAt(0).toUpperCase() + k.slice(1)}** — ${tips[k].length} tips`)
+          .map(k => `> 💡 **${k.charAt(0).toUpperCase() + k.slice(1)}** — ${tips[k].length} tips`)
           .join('\n')
       )
-      .setFooter({ text: 'Use /tip [category] to get a tip from a specific category' });
-    await interaction.reply({ embeds: [embed] });
+      .setFooter({ text: '🪖 DayZ Console Bot  •  /tip [category] for a specific tip' })
+      .setTimestamp();
+    await interaction.reply({ embeds: [tipsEmbed] });
 
   // /tip
   } else if (commandName === 'tip') {
@@ -868,12 +905,13 @@ client.on('interactionCreate', async interaction => {
     const pool     = category ? tips[category] : allTips;
     const tip      = pool[Math.floor(Math.random() * pool.length)];
     const label    = category ? category.charAt(0).toUpperCase() + category.slice(1) : 'Random';
-    const embed = new EmbedBuilder()
-      .setTitle(`💡 DayZ Tip — ${label}`)
-      .setDescription(tip)
-      .setColor(0x8B0000)
-      .setFooter({ text: 'Use /tips to see all categories' });
-    await interaction.reply({ embeds: [embed] });
+    const tipEmbed = new EmbedBuilder()
+      .setTitle(`💡  DayZ Console Tip — ${label}`)
+      .setDescription(`> ${tip}`)
+      .setColor(0x5865F2)
+      .setFooter({ text: '🪖 DayZ Console Bot  •  /tips to see all categories' })
+      .setTimestamp();
+    await interaction.reply({ embeds: [tipEmbed] });
 
   // /kick
   } else if (commandName === 'kick') {
@@ -930,12 +968,14 @@ client.on('interactionCreate', async interaction => {
     try {
       await target.timeout(null);
       const embed = new EmbedBuilder()
-        .setTitle('🔊 Member Unmuted')
-        .setColor(Colors.Green)
+        .setTitle('🔊  Member Unmuted')
+        .setColor(0x57F287)
+        .setThumbnail(target.user.displayAvatarURL())
         .addFields(
-          { name: 'User',      value: `${target.user.tag} (${target.id})`, inline: true },
-          { name: 'Moderator', value: user.tag,                             inline: true },
+          { name: '👤 User',      value: `<@${target.id}>\n\`${target.user.tag}\``, inline: true },
+          { name: '🛡️ Moderator', value: `<@${user.id}>\n\`${user.tag}\``,          inline: true },
         )
+        .setFooter({ text: `User ID: ${target.id}` })
         .setTimestamp();
       await interaction.reply({ embeds: [embed] });
       await sendLog(guild, embed);
@@ -954,12 +994,13 @@ client.on('interactionCreate', async interaction => {
     target.send({
       embeds: [
         new EmbedBuilder()
-          .setTitle('⚠️ You have received a warning')
-          .setColor(Colors.Yellow)
+          .setTitle('⚠️  You Have Been Warned')
+          .setColor(0xFEE75C)
+          .setDescription(`You received a warning in **${guild.name}**.`)
           .addFields(
-            { name: 'Server', value: guild.name, inline: true },
-            { name: 'Reason', value: reason },
+            { name: '📝 Reason', value: reason },
           )
+          .setFooter({ text: 'Further rule violations may result in a mute or ban.' })
           .setTimestamp(),
       ],
     }).catch(() => {});
@@ -990,7 +1031,7 @@ function buildRulesEmbeds(rules) {
       .setTitle(`${emoji}  ${label} Rules`)
       .setDescription(ruleList)
       .setColor(CATEGORY_COLORS[i % CATEGORY_COLORS.length])
-      .setFooter({ text: 'Break the rules and face the consequences.' });
+      .setFooter({ text: '🪖 DayZ Console Bot  •  Break the rules, face the consequences.' });
   });
 }
 
@@ -1014,8 +1055,9 @@ async function postRulesToChannel(guild) {
   // Post header then one embed per category
   const header = new EmbedBuilder()
     .setTitle('📜  Server Rules')
-    .setDescription('Read and follow the rules below. Ignorance is not an excuse.')
+    .setDescription('> Read and follow all rules listed below.\n> **Ignorance is not an excuse.** Rule breakers will be moderated.')
     .setColor(0x8B0000)
+    .setFooter({ text: '🪖 DayZ Console Bot  •  Last updated' })
     .setTimestamp();
 
   await ch.send({ embeds: [header] });
@@ -1028,26 +1070,44 @@ async function postRulesToChannel(guild) {
 // ─── Join Info Embed Builder ──────────────────────────────────────────────────
 
 function buildJoinEmbed(info) {
-  const embed = new EmbedBuilder()
-    .setTitle('🎮 How to Join the Server')
-    .setColor(0x8B0000)
-    .setDescription('Follow the steps below to find and join our DayZ server on Xbox.')
-    .addFields(
-      { name: '1️⃣  Open DayZ', value: 'Launch DayZ on your Xbox and go to **Community Servers**.' },
-      { name: '2️⃣  Search the server', value: `Search for:\n\`\`\`${info.name}\`\`\`` },
-      { name: '3️⃣  Host Gamertag', value: `Follow the host to find the server:\n**${info.gamertag}**` },
-    )
-    .setTimestamp();
+  const fields = [
+    {
+      name: '1️⃣  Launch DayZ',
+      value: 'Open DayZ on your Xbox and head to **Play → Community Servers**.',
+    },
+    {
+      name: '2️⃣  Search for the server',
+      value: [
+        'In the search bar, type the server name exactly:',
+        `\`\`\`${info.name}\`\`\``,
+      ].join('\n'),
+    },
+    {
+      name: '3️⃣  Connect',
+      value: 'Click the server from the list and hit **Join**.',
+    },
+  ];
 
   if (info.password) {
-    embed.addFields({ name: '🔒 Password', value: `\`${info.password}\`` });
+    fields.push({
+      name: '🔒  Password',
+      value: `When prompted, enter: \`${info.password}\``,
+    });
   }
   if (info.extra) {
-    embed.addFields({ name: '📝 Extra Info', value: info.extra });
+    fields.push({ name: '📋  Extra Info', value: info.extra });
   }
 
-  embed.setFooter({ text: 'Still struggling? Ask a member for help!' });
-  return embed;
+  return new EmbedBuilder()
+    .setTitle('<:xbox:> How to Join Our DayZ Server')
+    .setTitle('🎮  How to Join Our DayZ Server')
+    .setColor(0x107C10) // Xbox green
+    .setDescription(
+      '> Welcome! Follow the steps below to get into the server.\n> If you still can\'t find it, ask a member for help.'
+    )
+    .addFields(fields)
+    .setFooter({ text: '🪖 DayZ Console Bot  •  Livonia (Enoch)' })
+    .setTimestamp();
 }
 
 // ─── Keyword Auto-Responder ───────────────────────────────────────────────────
