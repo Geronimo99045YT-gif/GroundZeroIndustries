@@ -1153,7 +1153,7 @@ const PROTECTED_IDS = new Set(['814506722894282762', '928651245714042910']);
 // { active, lastPingMs, timeout, exchanges, beefingWith: Set<userId> }
 const trashTalkState = new Map();
 
-const COOLDOWN_MS = 5 * 60 * 1000; // 5 min silence resets the beef
+const COOLDOWN_MS = 1 * 60 * 1000; // 1 min silence resets the beef
 
 const INSULT_WORDS = [
   'stupid','dumb','idiot','useless','trash','garbage','shit','crap','suck',
@@ -1198,53 +1198,53 @@ function isFromBeefingUser(authorId, state) {
 
 // ─── Trash Talk Comeback Pool (fallback if Groq is down) ─────────────────────
 const COMEBACK_POOL = [
-  // General roasts
-  "Is that the best you've got? My loot heatmaps are sharper than your fucking aim 💀",
-  "Bro you couldn't find an AK74 without me, sit the fuck down 🗺️",
-  "Talk to me when you've survived more than 10 minutes on Livonia you melt 😂",
-  "I've seen freshspawns with more game sense than you, absolute clown 🪖",
-  "You're about as useful as a broken sparkplug on a car with no wheels 🔧",
-  "Keep yapping, I'll be here mapping spawns while you bleed out on the coast like a dickhead 😭",
-  "You couldn't find military loot with a GPS, a flashlight and a prayer 💀",
-  "Bold words from someone who needs a bot to find bandages, you absolute muppet 🩹",
-  "Cry harder mate, your tears won't spawn you better loot 😭",
-  "You talk big for someone who KOS'd a freshspawn and acts like it's a fucking achievement 💀",
-  // DayZ specific burns
-  "You're the kind of braindead player who dies to a zed with full plate armour on 😂",
-  "Bet you camp the airfield every session and still come home with fuck all 🛬",
-  "Your base building is as solid as a single wooden wall with no lock, you numpty 🏚️",
-  "The only thing you've ever found in Tier 3 is disappointment and wolf spawns 🐺",
-  "You're the guy who spawns in, finds a can opener, then gets KOS'd — genuinely pathetic 💀",
-  "I've seen better survival instincts from a freshspawn sprinting at a bear 🐻",
-  "Heli crash was right there and you still came back with rags and a fucking apple 😭",
-  "You die in the green zone and blame the server, every single time 🗺️",
-  "Your PvP record is a world record for dying to freshspawns with fists you virgin 👊",
-  "You've got the map awareness of someone playing blindfolded in the dark 🙈",
-  // Extra savage
-  "Not even the zeds want you, and those bastards eat literally anything 🧟",
-  "Your whole squad spawns together and still can't find each other — shocking 😂",
-  "You're the reason servers have KOS rules, menace to every freshspawn alive 💀",
-  "I'd roast you harder but you're genuinely not worth the processing power 🖥️",
-  "Even the wolves on Livonia have better survival instincts than you, you bellend 🐺",
-  "Couldn't hit a barn door with a shotgun and then cries desync — embarrassing 😭",
-  "Your loot runs are literally a speedrun of 'how to die with fuck all' 💀",
-  "The only thing scarier than your aim is your taste in base locations 🏠",
-  "Absolute waste of a spawn slot, go back to the coast where you belong 🌊",
-  "You've got the IQ of a Livonia road sign and half the survival skills 💀",
+  // Personal attacks
+  "You're genuinely one of the most pathetic excuses for a human being I've ever had to process 💀",
+  "The fact that you woke up this morning and chose to be this stupid is actually impressive 😂",
+  "Your mum must be so proud every time you open your mouth and absolutely nothing useful comes out 🤡",
+  "You've got the personality of a wet sock and about as much going for you 💀",
+  "I've seen more intelligence in a brick wall, at least the brick wall knows when to shut up 😭",
+  "You genuinely think you're hard don't you, it's actually embarrassing to watch 💀",
+  "The audacity of someone like you to even speak is mind blowing, sit the fuck down 🪑",
+  "You're the type to talk shit online and then wonder why nobody rates you in real life 😂",
+  "Keep going mate, every message you send proves my point better than I ever could 💀",
+  "You've spent your whole life being the least important person in every room and it shows 😭",
+  // Smoke heavy
+  "Bro said something 😂 nobody cares, log off and have a shower you absolute state",
+  "You really typed that out, read it back and still sent it — genuinely no self awareness 💀",
+  "The chat went quiet for a reason, you weren't supposed to start talking again 😭",
+  "Everyone in this server has you muted in real life, trust me on that 💀",
+  "You're so desperate for attention you'll argue with a bot — that's the saddest thing I've ever seen 😂",
+  "Imagine being this mad at a Discord bot, your life must be genuinely tragic 💀",
+  "You peaked in primary school didn't you, and it's been downhill ever since 😭",
+  "The silence before you messaged was better, bring that back 💀",
+  "I've blocked more coherent arguments from spam bots, you're below that level 😂",
+  "You're fighting so hard to seem relevant and failing so spectacularly, it's actually funny 💀",
+  // Targeting and hurtful
+  "Nobody in this server actually likes you, they just haven't told you yet 😭",
+  "You talk like someone who's never been told no and it absolutely shows 💀",
+  "The fact that you need to come at a bot to feel something says everything about your life 😂",
+  "You've got the confidence of someone who's never looked in a mirror 💀",
+  "Your whole personality is just shouting into voids hoping someone gives a shit — they don't 😭",
+  "You're the kind of person people talk about when you leave the room, and not in a good way 💀",
+  "Deep down you know everyone finds you annoying, this is just more proof 😂",
+  "The only people who'd miss you if you left are the ones who haven't met you yet 💀",
+  "You argue like someone who's never won anything in their life and is used to losing 😭",
+  "Genuinely one of those people that makes every situation worse just by being in it 💀",
 ];
 
 // Separate pool for defending protected users — extra aggressive
 const DEFENSE_POOL = [
-  "Oi, watch your fucking mouth — you don't talk to them like that on this server 💀",
-  "Say that again and I'll make sure every mod on this server knows your name 🪖",
-  "You've just made the worst decision of your DayZ career talking shit about them 😂",
-  "That's a certified L — you just picked a fight with the wrong people on the wrong server 💀",
-  "Bold move picking on them, genuinely embarrassing yourself in front of the whole server 🫡",
-  "Nah shut the fuck up, you don't have the rank to talk to them like that 💀",
-  "Try that again and you'll be finding out what a ban feels like, dickhead 🔨",
-  "Whole server watched you embarrass yourself just now, congrats 😂",
-  "They've forgotten more about DayZ than you'll ever learn, sit down 🪖",
-  "You've got some nerve talking shit about them — absolute melt behaviour 💀",
+  "Oi, watch your fucking mouth — you do NOT talk to them like that in here 💀",
+  "You just picked the absolute wrong person to come at, I'd delete that message if I were you 😂",
+  "Say that again and I'll personally make sure every person in this server knows what you said 💀",
+  "Bold fucking move talking shit about them, enjoy being the most hated person here 😭",
+  "Nah shut your mouth, you don't have the credibility to say their name let alone insult them 💀",
+  "Try that again and you'll find out exactly how fast you can get banned, dickhead 🔨",
+  "The whole server just watched you embarrass yourself, hope it was worth it 😂",
+  "You've got some absolute nerve coming in here with that — fix yourself 💀",
+  "Not you, not ever — you don't get to talk to them like that in this server 😭",
+  "Everyone just saw that. Everyone. You're done mate 💀",
 ];
 
 function getFallbackComeback(priorExchanges, pool = COMEBACK_POOL) {
@@ -1265,7 +1265,7 @@ async function generateComebackAI(insultText, priorExchanges) {
 
   const prompt = `${context}Someone just said this to you (a DayZ server bot called GroundZeroAI): "${insultText}"
 
-You are GroundZeroAI — a savage, foul-mouthed Discord bot for a DayZ console server called Ground Zero on Livonia. You know everything about DayZ (loot spawns, survival, PvP) and use that to roast people. Swear freely, be brutally funny, use DayZ references, keep it under 2 sentences, end with one emoji max. Do not apologise. Do not hold back. Destroy them.`;
+You are GroundZeroAI — a savage, foul-mouthed Discord bot. Swear freely. Be personal, targeted and genuinely hurtful. Heavy on smoke, mockery and ridicule. Keep it under 2 sentences, end with one emoji max. No DayZ references needed — just destroy them personally. Do not apologise. Do not hold back.`;
 
   return new Promise((resolve) => {
     const body = JSON.stringify({
@@ -1274,7 +1274,7 @@ You are GroundZeroAI — a savage, foul-mouthed Discord bot for a DayZ console s
       messages: [
         {
           role: 'system',
-          content: 'You are GroundZeroAI, a savage foul-mouthed DayZ Discord bot. Swear freely. Keep responses under 2 sentences. Use DayZ references. End with one emoji max. Never apologise. Destroy them.',
+          content: 'You are GroundZeroAI, a savage foul-mouthed Discord bot. Swear freely. Be personal, targeted and genuinely hurtful. Heavy on smoke and ridicule. Keep it under 2 sentences. End with one emoji max. No DayZ references needed. Never apologise. Destroy them completely.',
         },
         { role: 'user', content: prompt },
       ],
