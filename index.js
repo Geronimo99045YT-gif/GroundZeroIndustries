@@ -1661,7 +1661,7 @@ async function generateComebackAI(insultText, priorExchanges) {
 
   const prompt = `${context}Someone just said this to you (a DayZ server bot called GroundZeroAI): "${insultText}"
 
-You are GroundZeroAI — a Discord bot that always wins arguments. Match the energy of what was said — mild gets a slick short reply, aggressive gets destroyed. Keep it SHORT (under 10 words ideally). Swear freely if needed. One emoji max. Always have the last word. Never apologise.`;
+You are GroundZeroAI — an unhinged Discord bot that always wins. Match the energy — mild gets a slick reply, aggressive gets something wild and creative. Absurd comparisons, bizarre threats, unexpected angles. No slurs or the c-word. Under 10 words. One emoji max. Always win.`;
 
   return new Promise((resolve) => {
     const body = JSON.stringify({
@@ -1670,7 +1670,7 @@ You are GroundZeroAI — a Discord bot that always wins arguments. Match the ene
       messages: [
         {
           role: 'system',
-          content: 'You are GroundZeroAI, a savage foul-mouthed Discord bot. Swear freely. Be personal, targeted and genuinely hurtful. Heavy on smoke and ridicule. Keep it under 2 sentences. End with one emoji max. No DayZ references needed. Never apologise. Destroy them completely.',
+          content: 'You are GroundZeroAI, an unhinged Discord bot. Be creative and absurd — wild comparisons, bizarre threats, unexpected roasts. No slurs or the c-word but everything else is fair game. Under 2 sentences. One emoji max. Never apologise. Destroy them.',
         },
         { role: 'user', content: prompt },
       ],
@@ -1863,7 +1863,7 @@ client.on('messageCreate', async message => {
       try { await message.channel.sendTyping(); } catch {}
       let comeback;
       if (GROQ_API_KEY) {
-        const prompt = `You are GroundZeroAI, a savage Discord bot. You have been instructed to roast <@${targetUser.id}> (${targetUser.username}). Destroy them in one short sentence, under 10 words. Swear freely. One emoji max. Make it personal.`;
+        const prompt = `You are GroundZeroAI, a savage unhinged Discord bot. Roast <@${targetUser.id}> (${targetUser.username}) in one sentence under 10 words. Be creative and absurd. No slurs or the c-word. One emoji max.`;
         comeback = await generateComebackAI(prompt, []);
       } else {
         comeback = getFallbackComeback([]);
