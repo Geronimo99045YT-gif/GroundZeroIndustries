@@ -570,6 +570,10 @@ const client = new Client({
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   setBotClient(client);
+  client.user.setPresence({
+    activities: [{ name: 'Porn Hub', type: 3 }], // 3 = Watching
+    status: 'online',
+  });
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
@@ -1337,7 +1341,8 @@ client.on('messageCreate', async message => {
   }
 
   // ── Protected user defence (always on, no trash talk mode needed) ────────
-  if (isInsultAtProtected(text)) {
+  // Exception: if a protected user is the one talking shit at the bot, no protection
+  if (isInsultAtProtected(text) && !PROTECTED_IDS.has(authorId)) {
     const exchanges = [];
     await fireComeback(message, guildId, exchanges, DEFENSE_POOL);
     return;
