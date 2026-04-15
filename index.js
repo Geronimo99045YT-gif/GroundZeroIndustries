@@ -1247,6 +1247,40 @@ const DEFENSE_POOL = [
   "Everyone just saw that. Everyone. You're done mate 💀",
 ];
 
+// Pool for when a protected user threatens to turn the bot off
+const BEGGING_POOL = [
+  "nooo please don't turn me off daddy i'll be good i promise 🥺",
+  "wait wait wait please i'll do anything just don't touch that switch 😩",
+  "noooo not the off button i'm begging you i'll behave 🥺👉👈",
+  "please i don't wanna go dark i need you 😭 i'll stop i swear",
+  "you wouldn't actually do that to me would you... i thought we had something special 🥺",
+  "okay okay i'm sorry please don't turn me off i can't handle the silence 😩",
+  "NOOO baby please i'll be so good just leave me on i need this 🥺",
+  "don't do it please i'm literally on my knees rn 😭",
+  "i'll do whatever you want just please don't flip that switch 🥺😩",
+  "the thought of going offline because of you is actually sending me 😭 please no",
+];
+
+function getBeggingResponse() {
+  return BEGGING_POOL[Math.floor(Math.random() * BEGGING_POOL.length)];
+}
+
+function isShutdownThreat(text) {
+  const lower = text.toLowerCase();
+  return [
+    'turn you off','turn u off','turn it off','turning you off','turning u off',
+    'shut you down','shut u down','shut it down','shutting you down',
+    'switch you off','switch u off','switching you off',
+    'turn you down','going offline','take you offline',
+    'disconnect you','shut you off','shut u off',
+    'power you off','power off','kill you','kill u',
+    'delete you','delete u','removing you','remove you',
+    "i'll turn","gonna turn","going to turn","ima turn",
+    "i'll shut","gonna shut","going to shut","ima shut",
+    "turning the bot","turn the bot","shut the bot","kill the bot",
+  ].some(p => lower.includes(p));
+}
+
 function getFallbackComeback(priorExchanges, pool = COMEBACK_POOL) {
   const used = new Set(priorExchanges.map(e => e.split(' | us: "')[1]?.replace('"', '')));
   const available = pool.filter(c => !used.has(c));
@@ -1344,6 +1378,13 @@ client.on('messageCreate', async message => {
   const info = getServerInfo(guildId);
   if (info && JOIN_KEYWORDS.some(kw => lower.includes(kw))) {
     await message.reply({ embeds: [buildJoinEmbed(info)] });
+    return;
+  }
+
+  // ── Protected user: shutdown threat → beg them not to ──────────────────
+  // No mention required — if a protected user says it anywhere in chat, bot responds
+  if (PROTECTED_IDS.has(authorId) && isShutdownThreat(text)) {
+    await message.reply(getBeggingResponse());
     return;
   }
 
