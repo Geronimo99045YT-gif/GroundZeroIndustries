@@ -223,22 +223,36 @@ function bufferMessage(guildId, userId, username, channelId, text, hour) {
   }
 }
 
-async function generateStyleSummary(stats) {
+async function generateStyleAnalysis(stats) {
   if (!GROQ_API_KEY || !stats.message_samples?.length) return null;
 
   const samples = stats.message_samples.slice(-20).join(' | ');
   const ha = stats.hourly_activity ?? {};
   const peakHour = Object.entries(ha).sort((a,b)=>b[1]-a[1])[0]?.[0];
-  const peakLabel = peakHour ? `${peakHour}:00` : 'unknown';
+  const peakLabel = peakHour ? `${peakHour}:00 UTC` : 'unknown';
 
-  const prompt = `Based on these Discord messages from a player, write a short 2-3 sentence personality/communication style profile. Be observational and specific. Note their tone, vocabulary, how they engage. Messages: "${samples}". Peak activity hour: ${peakLabel}. Total messages: ${stats.message_count}.`;
+  const prompt = `Analyse these Discord messages and return ONLY a JSON object with no extra text:
+
+Messages: "${samples}"
+Total messages: ${stats.message_count}
+Peak activity: ${peakLabel}
+
+Return this exact JSON structure:
+{
+  "vibe": "one of: Aggressive | Chill | Chaotic | Friendly | Quiet | Loud | Toxic | Helpful | Sarcastic | Mixed",
+  "energy": "one of: High | Medium | Low",
+  "helps_others": "one of: Often | Sometimes | Rarely | Never",
+  "summary": "2 sentences max. Specific observations about their tone and how they communicate.",
+  "red_flags": "one sentence or null if none. Any concerning patterns like aggression or toxicity.",
+  "standout": "one short phrase describing what makes their style distinct"
+}`;
 
   return new Promise((resolve) => {
     const body = JSON.stringify({
       model: 'llama-3.1-8b-instant',
-      max_tokens: 150,
+      max_tokens: 250,
       messages: [
-        { role: 'system', content: 'You are an analyst writing concise player profiles based on their Discord messaging patterns. Be objective and specific.' },
+        { role: 'system', content: 'You are a Discord community analyst. Return only valid JSON, no markdown, no explanation.' },
         { role: 'user', content: prompt },
       ],
     });
@@ -253,7 +267,11 @@ async function generateStyleSummary(stats) {
       res.on('end', () => {
         try {
           const p = JSON.parse(data);
-          resolve(p.choices?.[0]?.message?.content?.trim() ?? null);
+          const text = p.choices?.[0]?.message?.content?.trim();
+          // Strip any markdown fences just in case
+          const clean = text?.replace(/```json|```/g, '').trim();
+          const parsed = JSON.parse(clean);
+          resolve(parsed);
         } catch { resolve(null); }
       });
     });
@@ -944,23 +962,34 @@ client.on('interactionCreate', async interaction => {
     const firstSeen = stats.first_seen ? `<t:${Math.floor(new Date(stats.first_seen).getTime()/1000)}:D>` : 'Unknown';
     const lastSeen  = stats.last_seen  ? `<t:${Math.floor(new Date(stats.last_seen).getTime()/1000)}:R>`  : 'Unknown';
 
-    // Regenerate style summary if stale (older than 24h) or missing
-    let summary = stats.style_summary;
+    // Regenerate analysis if stale (older than 24h) or missing
+    let analysis = null;
+    try { analysis = stats.style_summary ? JSON.parse(stats.style_summary) : null; } catch {}
     const summaryAge = stats.style_updated_at ? Date.now() - new Date(stats.style_updated_at).getTime() : Infinity;
-    if ((!summary || summaryAge > 24 * 60 * 60 * 1000) && stats.message_samples?.length > 3) {
-      summary = await generateStyleSummary(stats);
-      if (summary) {
+    if ((!analysis || summaryAge > 24 * 60 * 60 * 1000) && stats.message_samples?.length > 3) {
+      analysis = await generateStyleAnalysis(stats);
+      if (analysis) {
         await sbRequest('POST', '/rest/v1/player_stats', {
           ...stats,
-          style_summary: summary,
+          style_summary: JSON.stringify(analysis),
           style_updated_at: new Date().toISOString(),
         });
       }
     }
 
+    // Pick embed colour based on vibe
+    const vibeColors = {
+      'Aggressive': 0xED4245, 'Toxic': 0xED4245,
+      'Chill': 0x57F287,     'Friendly': 0x57F287, 'Helpful': 0x57F287,
+      'Chaotic': 0xFEE75C,   'Loud': 0xFEE75C,
+      'Quiet': 0x5865F2,     'Sarcastic': 0x9B59B6,
+      'Mixed': 0x8B0000,
+    };
+    const embedColor = analysis ? (vibeColors[analysis.vibe] ?? 0x5865F2) : 0x5865F2;
+
     const embed = new EmbedBuilder()
       .setTitle(`📊  ${target.username} — Player Profile`)
-      .setColor(0x5865F2)
+      .setColor(embedColor)
       .setThumbnail(target.displayAvatarURL())
       .addFields(
         { name: '💬 Total Messages', value: `${stats.message_count.toLocaleString()}`, inline: true },
@@ -972,8 +1001,27 @@ client.on('interactionCreate', async interaction => {
       .setFooter({ text: `User ID: ${target.id}  •  GroundZeroAI` })
       .setTimestamp();
 
-    if (summary) {
-      embed.addFields({ name: '🧠 Messaging Style', value: summary });
+    if (analysis) {
+      const vibeEmoji = {
+        'Aggressive':'😤','Toxic':'☠️','Chill':'😎','Friendly':'😊',
+        'Helpful':'🤝','Chaotic':'🌀','Loud':'📢','Quiet':'🤫',
+        'Sarcastic':'🙄','Mixed':'🎭',
+      };
+      const helpEmoji = { 'Often':'🤝', 'Sometimes':'👍', 'Rarely':'🤷', 'Never':'❌' };
+      const energyEmoji = { 'High':'🔥', 'Medium':'⚡', 'Low':'💤' };
+
+      embed.addFields(
+        { name: `${vibeEmoji[analysis.vibe] ?? '🎭'} Vibe`,        value: analysis.vibe ?? 'Unknown',        inline: true },
+        { name: `${energyEmoji[analysis.energy] ?? '⚡'} Energy`,  value: analysis.energy ?? 'Unknown',      inline: true },
+        { name: `${helpEmoji[analysis.helps_others] ?? '👍'} Helps Others`, value: analysis.helps_others ?? 'Unknown', inline: true },
+      );
+      if (analysis.standout) embed.addFields({ name: '✨ Standout Trait', value: analysis.standout });
+      if (analysis.summary)  embed.addFields({ name: '🧠 Summary',        value: analysis.summary });
+      if (analysis.red_flags && analysis.red_flags !== 'null' && analysis.red_flags !== null) {
+        embed.addFields({ name: '🚩 Red Flags', value: analysis.red_flags });
+      }
+    } else if (stats.message_count < 4) {
+      embed.addFields({ name: '🧠 Analysis', value: 'Not enough messages yet to build a profile.' });
     }
 
     await interaction.editReply({ embeds: [embed] });
