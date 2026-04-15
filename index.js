@@ -1141,69 +1141,107 @@ function buildJoinEmbed(info) {
 }
 
 // ─── Trash Talk Engine ───────────────────────────────────────────────────────
-// Per-guild state: are we currently beefing, and when did it last trigger?
+
+// Protected users — bot defends these regardless of trash talk mode
+const PROTECTED_IDS = new Set(['814506722894282762', '928651245714042910']);
+
+// Per-guild beefing state
+// { active, lastPingMs, timeout, exchanges, beefingWith: Set<userId> }
 const trashTalkState = new Map();
-// { guildId: { active: bool, lastPingMs: number, timeout: NodeJS.Timeout|null } }
 
-const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes silence before bot stops beefing
+const COOLDOWN_MS = 5 * 60 * 1000; // 5 min silence resets the beef
 
-function isInsult(content, botId) {
-  // Must mention the bot
-  if (!content.includes(`<@${botId}>`)) return false;
-  const lower = content.toLowerCase();
-  const insultWords = [
-    'stupid','dumb','idiot','useless','trash','garbage','shit','crap','suck',
-    'bot','rubbish','bad','terrible','awful','waste','lame','broken','dead',
-    'ugly','hate','kill','die','worst','loser','pathetic','scrap',
-    'bots are shit','bots suck','shut up','stfu','f off','fuck off',
-    'piss off','boring','mid','ass','bitch','dick','fucking','retard',
-  ];
-  return insultWords.some(w => lower.includes(w));
+const INSULT_WORDS = [
+  'stupid','dumb','idiot','useless','trash','garbage','shit','crap','suck',
+  'rubbish','bad','terrible','awful','waste','lame','broken','dead','ugly',
+  'hate','worst','loser','pathetic','scrap','shut up','stfu','f off',
+  'fuck off','piss off','boring','mid','ass','bitch','dick','fucking',
+  'retard','bellend','twat','wanker','prick','moron','muppet','knobhead',
+  'dickhead','tosser','absolute melt','clown','numpty','melt','dogshit',
+  'braindead','thick','nonce','rat','snitch','virgin',
+];
+
+// Check if a message is an insult directed at the bot (must @mention it)
+function isInsultAtBot(text, botId) {
+  if (!text.includes(`<@${botId}>`)) return false;
+  const lower = text.toLowerCase();
+  return INSULT_WORDS.some(w => lower.includes(w));
 }
 
-function isTargetingBot(content, botId) {
-  return content.includes(`<@${botId}>`);
+// Check if a message mentions the bot at all
+function mentionsBot(text, botId) {
+  return text.includes(`<@${botId}>`);
+}
+
+// Check if a message is insulting a protected user (mention + insult word)
+function isInsultAtProtected(text) {
+  const lower = text.toLowerCase();
+  const mentionsProtected = [...PROTECTED_IDS].some(id => text.includes(`<@${id}>`));
+  if (!mentionsProtected) return false;
+  return INSULT_WORDS.some(w => lower.includes(w));
+}
+
+// Check if a message from a beefing user targets the bot
+// (during active beef we track by authorId, no mention required)
+function isFromBeefingUser(authorId, state) {
+  return state.active && state.beefingWith?.has(authorId);
 }
 
 // ─── Trash Talk Comeback Pool (fallback if Groq is down) ─────────────────────
 const COMEBACK_POOL = [
   // General roasts
-  "Is that the best you've got? My loot heatmaps are sharper than your aim 💀",
-  "Bro you couldn't find an AK74 without me, sit down 🗺️",
-  "Talk to me when you've survived more than 10 minutes on Livonia 😂",
-  "I've seen freshspawns with more game sense than you 🪖",
+  "Is that the best you've got? My loot heatmaps are sharper than your fucking aim 💀",
+  "Bro you couldn't find an AK74 without me, sit the fuck down 🗺️",
+  "Talk to me when you've survived more than 10 minutes on Livonia you melt 😂",
+  "I've seen freshspawns with more game sense than you, absolute clown 🪖",
   "You're about as useful as a broken sparkplug on a car with no wheels 🔧",
-  "Keep yapping, I'll be here mapping spawns while you bleed out on the coast 😭",
+  "Keep yapping, I'll be here mapping spawns while you bleed out on the coast like a dickhead 😭",
   "You couldn't find military loot with a GPS, a flashlight and a prayer 💀",
-  "Bold words from someone who needs a bot to find bandages 🩹",
-  "Cry harder, your tears won't spawn you better loot 😭",
-  "You talk big for someone who KOS'd a freshspawn and calls it a win 💀",
+  "Bold words from someone who needs a bot to find bandages, you absolute muppet 🩹",
+  "Cry harder mate, your tears won't spawn you better loot 😭",
+  "You talk big for someone who KOS'd a freshspawn and acts like it's a fucking achievement 💀",
   // DayZ specific burns
-  "You're the kind of player who dies to a zed with full plate armour equipped 😂",
-  "Bet you camp the airfield and still come home empty handed every single time 🛬",
-  "Your base building skills are as solid as a single wooden wall with no lock 🏚️",
+  "You're the kind of braindead player who dies to a zed with full plate armour on 😂",
+  "Bet you camp the airfield every session and still come home with fuck all 🛬",
+  "Your base building is as solid as a single wooden wall with no lock, you numpty 🏚️",
   "The only thing you've ever found in Tier 3 is disappointment and wolf spawns 🐺",
-  "You're the guy who spawns in, finds a can opener, then gets KOS'd in the same town 💀",
-  "I've seen better survival instincts from a freshspawn running straight at a bear 🐻",
-  "The helicopter crash site was right there and you still came back with rags and an apple 😭",
-  "Bro you die in the green zone and blame the server every time 🗺️",
-  "Your PvP record is basically a world record for dying to freshspawns with fists 👊",
-  "You've got the map awareness of someone playing with their eyes closed in the dark 🙈",
+  "You're the guy who spawns in, finds a can opener, then gets KOS'd — genuinely pathetic 💀",
+  "I've seen better survival instincts from a freshspawn sprinting at a bear 🐻",
+  "Heli crash was right there and you still came back with rags and a fucking apple 😭",
+  "You die in the green zone and blame the server, every single time 🗺️",
+  "Your PvP record is a world record for dying to freshspawns with fists you virgin 👊",
+  "You've got the map awareness of someone playing blindfolded in the dark 🙈",
   // Extra savage
-  "Not even the zeds want to bother with you, and they eat literally anything 🧟",
-  "Your whole squad probably spawns together and still can't find each other 😂",
-  "You're the reason servers have KOS rules, absolute menace to fresh spawns 💀",
-  "I'd roast you harder but I don't want to waste the processing power 🖥️",
-  "Even the wolves on Livonia have better survival instincts than you mate 🐺",
-  "You couldn't hit a barn door with a shotgun and then you blame desync 😭",
-  "Your loot runs look like you're speedrunning 'how to die with nothing' 💀",
-  "The only thing scarier than your aim is your base location choices 🏠",
+  "Not even the zeds want you, and those bastards eat literally anything 🧟",
+  "Your whole squad spawns together and still can't find each other — shocking 😂",
+  "You're the reason servers have KOS rules, menace to every freshspawn alive 💀",
+  "I'd roast you harder but you're genuinely not worth the processing power 🖥️",
+  "Even the wolves on Livonia have better survival instincts than you, you bellend 🐺",
+  "Couldn't hit a barn door with a shotgun and then cries desync — embarrassing 😭",
+  "Your loot runs are literally a speedrun of 'how to die with fuck all' 💀",
+  "The only thing scarier than your aim is your taste in base locations 🏠",
+  "Absolute waste of a spawn slot, go back to the coast where you belong 🌊",
+  "You've got the IQ of a Livonia road sign and half the survival skills 💀",
 ];
 
-function getFallbackComeback(priorExchanges) {
+// Separate pool for defending protected users — extra aggressive
+const DEFENSE_POOL = [
+  "Oi, watch your fucking mouth — you don't talk to them like that on this server 💀",
+  "Say that again and I'll make sure every mod on this server knows your name 🪖",
+  "You've just made the worst decision of your DayZ career talking shit about them 😂",
+  "That's a certified L — you just picked a fight with the wrong people on the wrong server 💀",
+  "Bold move picking on them, genuinely embarrassing yourself in front of the whole server 🫡",
+  "Nah shut the fuck up, you don't have the rank to talk to them like that 💀",
+  "Try that again and you'll be finding out what a ban feels like, dickhead 🔨",
+  "Whole server watched you embarrass yourself just now, congrats 😂",
+  "They've forgotten more about DayZ than you'll ever learn, sit down 🪖",
+  "You've got some nerve talking shit about them — absolute melt behaviour 💀",
+];
+
+function getFallbackComeback(priorExchanges, pool = COMEBACK_POOL) {
   const used = new Set(priorExchanges.map(e => e.split(' | us: "')[1]?.replace('"', '')));
-  const available = COMEBACK_POOL.filter(c => !used.has(c));
-  const choices = available.length > 0 ? available : COMEBACK_POOL;
+  const available = pool.filter(c => !used.has(c));
+  const choices = available.length > 0 ? available : pool;
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
@@ -1218,7 +1256,7 @@ async function generateComebackAI(insultText, priorExchanges) {
 
   const prompt = `${context}Someone just said this to you (a DayZ server bot called GroundZeroAI): "${insultText}"
 
-You are GroundZeroAI — a savage, no-filter Discord bot for a DayZ console server called Ground Zero on Livonia. You know everything about DayZ (loot spawns, survival, PvP) and you use that knowledge to roast people. Be brutally funny, use DayZ references where possible, keep it under 2 sentences, no emojis in the middle of sentences, end with one emoji max. Do not apologise. Do not be nice. Destroy them.`;
+You are GroundZeroAI — a savage, foul-mouthed Discord bot for a DayZ console server called Ground Zero on Livonia. You know everything about DayZ (loot spawns, survival, PvP) and use that to roast people. Swear freely, be brutally funny, use DayZ references, keep it under 2 sentences, end with one emoji max. Do not apologise. Do not hold back. Destroy them.`;
 
   return new Promise((resolve) => {
     const body = JSON.stringify({
@@ -1227,7 +1265,7 @@ You are GroundZeroAI — a savage, no-filter Discord bot for a DayZ console serv
       messages: [
         {
           role: 'system',
-          content: 'You are GroundZeroAI, a savage no-filter DayZ Discord bot. Keep responses under 2 sentences. Use DayZ references. End with one emoji max. Never apologise. Destroy them.',
+          content: 'You are GroundZeroAI, a savage foul-mouthed DayZ Discord bot. Swear freely. Keep responses under 2 sentences. Use DayZ references. End with one emoji max. Never apologise. Destroy them.',
         },
         { role: 'user', content: prompt },
       ],
@@ -1263,6 +1301,24 @@ You are GroundZeroAI — a savage, no-filter Discord bot for a DayZ console serv
 
 // ─── Keyword Auto-Responder + Trash Talk ─────────────────────────────────────
 
+async function fireComeback(message, guildId, exchanges, pool = null) {
+  try { await message.channel.sendTyping(); } catch {}
+  const comeback = pool
+    ? getFallbackComeback(exchanges, pool)
+    : await generateComebackAI(message.content, exchanges);
+  exchanges.push(`them: "${message.content.slice(0, 80)}" | us: "${comeback.slice(0, 80)}"`);
+  await message.reply(comeback);
+  return comeback;
+}
+
+function resetCooldown(state, guildId) {
+  if (state.timeout) clearTimeout(state.timeout);
+  state.timeout = setTimeout(() => {
+    const s = trashTalkState.get(guildId);
+    if (s) { s.active = false; s.beefingWith = new Set(); s.exchanges = []; trashTalkState.set(guildId, s); }
+  }, COOLDOWN_MS);
+}
+
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   if (!message.guild)     return;
@@ -1271,6 +1327,7 @@ client.on('messageCreate', async message => {
   const botId    = client.user.id;
   const text     = message.content;
   const lower    = text.toLowerCase();
+  const authorId = message.author.id;
 
   // ── Join keyword auto-reply ──────────────────────────────────────────────
   const info = getServerInfo(guildId);
@@ -1279,57 +1336,57 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  // ── Trash talk ───────────────────────────────────────────────────────────
+  // ── Protected user defence (always on, no trash talk mode needed) ────────
+  if (isInsultAtProtected(text)) {
+    const exchanges = [];
+    await fireComeback(message, guildId, exchanges, DEFENSE_POOL);
+    return;
+  }
+
+  // ── Trash talk (requires mode to be on) ──────────────────────────────────
   if (!getTrashTalk(guildId)) return;
 
-  const state = trashTalkState.get(guildId) ?? { active: false, lastPingMs: 0, timeout: null, exchanges: [] };
+  const state = trashTalkState.get(guildId) ?? {
+    active: false, lastPingMs: 0, timeout: null, exchanges: [], beefingWith: new Set(),
+  };
+  if (!state.beefingWith) state.beefingWith = new Set();
 
-  // Case 1: fresh insult directed at bot → start/continue beefing
-  if (isInsult(text, botId)) {
-    state.active    = true;
+  // Case 1: Bot mentioned with an insult → start beef, track this user
+  if (isInsultAtBot(text, botId)) {
+    state.active = true;
     state.lastPingMs = Date.now();
-    state.exchanges  = state.exchanges ?? [];
-
-    // Clear any existing cooldown timer
+    state.beefingWith.add(authorId);
     if (state.timeout) { clearTimeout(state.timeout); state.timeout = null; }
-
     trashTalkState.set(guildId, state);
 
-    try { await message.channel.sendTyping(); } catch {}
-
-    const comeback = await generateComebackAI(text, state.exchanges);
-    state.exchanges.push(`them: "${text.slice(0, 80)}" | us: "${comeback.slice(0, 80)}"`);
-
-    await message.reply(comeback);
-
-    // Set 5-min cooldown to stop beefing if ignored
-    state.timeout = setTimeout(() => {
-      const s = trashTalkState.get(guildId);
-      if (s) { s.active = false; s.exchanges = []; trashTalkState.set(guildId, s); }
-    }, COOLDOWN_MS);
-
+    await fireComeback(message, guildId, state.exchanges);
+    resetCooldown(state, guildId);
     trashTalkState.set(guildId, state);
     return;
   }
 
-  // Case 2: currently beefing and bot is mentioned (but not a fresh insult) → keep going
-  if (state.active && isTargetingBot(text, botId)) {
+  // Case 2: Currently beefing — any message from a beefing user fires back
+  // (no mention required — bot is watching them now)
+  if (isFromBeefingUser(authorId, state)) {
     state.lastPingMs = Date.now();
     if (state.timeout) { clearTimeout(state.timeout); state.timeout = null; }
-
     trashTalkState.set(guildId, state);
-    try { await message.channel.sendTyping(); } catch {}
 
-    const comeback = await generateComebackAI(text, state.exchanges);
-    state.exchanges.push(`them: "${text.slice(0, 80)}" | us: "${comeback.slice(0, 80)}"`);
+    await fireComeback(message, guildId, state.exchanges);
+    resetCooldown(state, guildId);
+    trashTalkState.set(guildId, state);
+    return;
+  }
 
-    await message.reply(comeback);
+  // Case 3: Currently beefing — someone else mentions the bot → drag them in too
+  if (state.active && mentionsBot(text, botId)) {
+    state.lastPingMs = Date.now();
+    state.beefingWith.add(authorId);
+    if (state.timeout) { clearTimeout(state.timeout); state.timeout = null; }
+    trashTalkState.set(guildId, state);
 
-    state.timeout = setTimeout(() => {
-      const s = trashTalkState.get(guildId);
-      if (s) { s.active = false; s.exchanges = []; trashTalkState.set(guildId, s); }
-    }, COOLDOWN_MS);
-
+    await fireComeback(message, guildId, state.exchanges);
+    resetCooldown(state, guildId);
     trashTalkState.set(guildId, state);
   }
 });
