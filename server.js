@@ -50,7 +50,7 @@ const server = http.createServer((req, res) => {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta http-equiv="refresh" content="30"/>
-  <title>DayZ Bot — Status</title>
+  <title>GroundZeroAI — Status</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -189,7 +189,7 @@ const server = http.createServer((req, res) => {
 <body>
   <div class="card">
     <div class="logo">🪖</div>
-    <h1>DayZ Console Bot</h1>
+    <h1>GroundZeroAI</h1>
     <div class="tag">${tag}</div>
 
     <div class="status-pill">

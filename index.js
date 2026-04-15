@@ -1,9 +1,12 @@
 // ─── Secrets (set these in your host's environment variables / secrets section) ─
-// DISCORD_TOKEN    — your bot token
-// CLIENT_ID        — your application ID
+// DISCORD_TOKEN      — your bot token
+// CLIENT_ID          — your application ID
+// GROQ_API_KEY       — for AI trash talk (free at console.groq.com)
 
-const TOKEN     = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
+const TOKEN            = process.env.DISCORD_TOKEN;
+const CLIENT_ID        = process.env.CLIENT_ID;
+const GROQ_API_KEY     = process.env.GROQ_API_KEY ?? null;
+const https            = require('https');
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -42,6 +45,13 @@ function getServerInfo(guildId) { return config[guildId]?.serverInfo ?? null; }
 function setServerInfo(guildId, info) {
   if (!config[guildId]) config[guildId] = {};
   config[guildId].serverInfo = info;
+  saveConfig(config);
+}
+
+function getTrashTalk(guildId)  { return config[guildId]?.trashTalkEnabled ?? false; }
+function setTrashTalk(guildId, val) {
+  if (!config[guildId]) config[guildId] = {};
+  config[guildId].trashTalkEnabled = val;
   saveConfig(config);
 }
 
@@ -275,7 +285,7 @@ async function generateHeatmap(itemName, itemData) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(
-    `${CATEGORY_EMOJI[itemData.c] || '❓'}  ${prettyName(itemName)} — Spawn Heatmap  |  Livonia`,
+    `${CATEGORY_EMOJI[itemData.c] || '❓'}  ${prettyName(itemName)} — Spawn Heatmap  |  GZ Livonia`,
     IMG_SIZE / 2,
     IMG_SIZE - BAR_H / 2,
   );
@@ -503,6 +513,11 @@ const commands = [
     .setName('ping')
     .setDescription('Check bot latency'),
 
+  new SlashCommandBuilder()
+    .setName('trashtalk')
+    .setDescription('Toggle trash talk mode on or off')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
   // ── Rules ──────────────────────────────────────────────────────────────────
 
   new SlashCommandBuilder()
@@ -653,7 +668,7 @@ client.on('interactionCreate', async interaction => {
       .setTitle('📜  Server Rules')
       .setDescription('> Read and follow all rules listed below.\n> **Ignorance is not an excuse.** Rule breakers will be moderated.')
       .setColor(0x8B0000)
-      .setFooter({ text: '🪖 DayZ Console Bot' })
+      .setFooter({ text: '🪖 GroundZeroAI' })
       .setTimestamp();
     await interaction.reply({ embeds: [header, ...embeds] });
 
@@ -697,6 +712,21 @@ client.on('interactionCreate', async interaction => {
           .setTimestamp(),
       ],
     });
+
+  // /trashtalk
+  } else if (commandName === 'trashtalk') {
+    const current = getTrashTalk(guild.id);
+    const newVal  = !current;
+    setTrashTalk(guild.id, newVal);
+    const embed = new EmbedBuilder()
+      .setTitle(newVal ? '🗣️  Trash Talk Mode: ON' : '🤐  Trash Talk Mode: OFF')
+      .setColor(newVal ? 0xED4245 : 0x57F287)
+      .setDescription(newVal
+        ? '> GroundZeroAI will now clap back at anyone who tags it with an insult.\n> It will keep beefing for **5 minutes** after the last ping before going quiet.'
+        : '> GroundZeroAI will no longer respond to trash talk.')
+      .setFooter({ text: `Toggled by ${user.tag}` })
+      .setTimestamp();
+    await interaction.reply({ embeds: [embed] });
 
   // /setserver
   } else if (commandName === 'setserver') {
@@ -850,7 +880,7 @@ client.on('interactionCreate', async interaction => {
         { name: '🗺️ Spawn Zones',   value: tierStr,     inline: false },
         { name: '🏠 Locations',     value: usageStr,    inline: false },
       )
-      .setFooter({ text: '🪖 DayZ Console Bot  •  Livonia (Enoch)  •  Heatmap below' })
+      .setFooter({ text: '🪖 GroundZeroAI  •  Livonia (Enoch)  •  Heatmap below' })
       .setTimestamp();
 
     if (tierLines.length > 0) {
@@ -895,7 +925,7 @@ client.on('interactionCreate', async interaction => {
           .map(k => `> 💡 **${k.charAt(0).toUpperCase() + k.slice(1)}** — ${tips[k].length} tips`)
           .join('\n')
       )
-      .setFooter({ text: '🪖 DayZ Console Bot  •  /tip [category] for a specific tip' })
+      .setFooter({ text: '🪖 GroundZeroAI  •  /tip [category] for a specific tip' })
       .setTimestamp();
     await interaction.reply({ embeds: [tipsEmbed] });
 
@@ -909,7 +939,7 @@ client.on('interactionCreate', async interaction => {
       .setTitle(`💡  DayZ Console Tip — ${label}`)
       .setDescription(`> ${tip}`)
       .setColor(0x5865F2)
-      .setFooter({ text: '🪖 DayZ Console Bot  •  /tips to see all categories' })
+      .setFooter({ text: '🪖 GroundZeroAI  •  /tips to see all categories' })
       .setTimestamp();
     await interaction.reply({ embeds: [tipEmbed] });
 
@@ -1031,7 +1061,7 @@ function buildRulesEmbeds(rules) {
       .setTitle(`${emoji}  ${label} Rules`)
       .setDescription(ruleList)
       .setColor(CATEGORY_COLORS[i % CATEGORY_COLORS.length])
-      .setFooter({ text: '🪖 DayZ Console Bot  •  Break the rules, face the consequences.' });
+      .setFooter({ text: '🪖 GroundZeroAI  •  Break the rules, face the consequences.' });
   });
 }
 
@@ -1057,7 +1087,7 @@ async function postRulesToChannel(guild) {
     .setTitle('📜  Server Rules')
     .setDescription('> Read and follow all rules listed below.\n> **Ignorance is not an excuse.** Rule breakers will be moderated.')
     .setColor(0x8B0000)
-    .setFooter({ text: '🪖 DayZ Console Bot  •  Last updated' })
+    .setFooter({ text: '🪖 GroundZeroAI  •  Last updated' })
     .setTimestamp();
 
   await ch.send({ embeds: [header] });
@@ -1106,24 +1136,202 @@ function buildJoinEmbed(info) {
       '> Welcome! Follow the steps below to get into the server.\n> If you still can\'t find it, ask a member for help.'
     )
     .addFields(fields)
-    .setFooter({ text: '🪖 DayZ Console Bot  •  Livonia (Enoch)' })
+    .setFooter({ text: '🪖 GroundZeroAI  •  Livonia (Enoch)' })
     .setTimestamp();
 }
 
-// ─── Keyword Auto-Responder ───────────────────────────────────────────────────
+// ─── Trash Talk Engine ───────────────────────────────────────────────────────
+// Per-guild state: are we currently beefing, and when did it last trigger?
+const trashTalkState = new Map();
+// { guildId: { active: bool, lastPingMs: number, timeout: NodeJS.Timeout|null } }
+
+const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes silence before bot stops beefing
+
+function isInsult(content, botId) {
+  // Must mention the bot
+  if (!content.includes(`<@${botId}>`)) return false;
+  const lower = content.toLowerCase();
+  const insultWords = [
+    'stupid','dumb','idiot','useless','trash','garbage','shit','crap','suck',
+    'bot','rubbish','bad','terrible','awful','waste','lame','broken','dead',
+    'ugly','hate','kill','die','worst','loser','pathetic','scrap',
+    'bots are shit','bots suck','shut up','stfu','f off','fuck off',
+    'piss off','boring','mid','ass','bitch','dick','fucking','retard',
+  ];
+  return insultWords.some(w => lower.includes(w));
+}
+
+function isTargetingBot(content, botId) {
+  return content.includes(`<@${botId}>`);
+}
+
+// ─── Trash Talk Comeback Pool (fallback if Groq is down) ─────────────────────
+const COMEBACK_POOL = [
+  // General roasts
+  "Is that the best you've got? My loot heatmaps are sharper than your aim 💀",
+  "Bro you couldn't find an AK74 without me, sit down 🗺️",
+  "Talk to me when you've survived more than 10 minutes on Livonia 😂",
+  "I've seen freshspawns with more game sense than you 🪖",
+  "You're about as useful as a broken sparkplug on a car with no wheels 🔧",
+  "Keep yapping, I'll be here mapping spawns while you bleed out on the coast 😭",
+  "You couldn't find military loot with a GPS, a flashlight and a prayer 💀",
+  "Bold words from someone who needs a bot to find bandages 🩹",
+  "Cry harder, your tears won't spawn you better loot 😭",
+  "You talk big for someone who KOS'd a freshspawn and calls it a win 💀",
+  // DayZ specific burns
+  "You're the kind of player who dies to a zed with full plate armour equipped 😂",
+  "Bet you camp the airfield and still come home empty handed every single time 🛬",
+  "Your base building skills are as solid as a single wooden wall with no lock 🏚️",
+  "The only thing you've ever found in Tier 3 is disappointment and wolf spawns 🐺",
+  "You're the guy who spawns in, finds a can opener, then gets KOS'd in the same town 💀",
+  "I've seen better survival instincts from a freshspawn running straight at a bear 🐻",
+  "The helicopter crash site was right there and you still came back with rags and an apple 😭",
+  "Bro you die in the green zone and blame the server every time 🗺️",
+  "Your PvP record is basically a world record for dying to freshspawns with fists 👊",
+  "You've got the map awareness of someone playing with their eyes closed in the dark 🙈",
+  // Extra savage
+  "Not even the zeds want to bother with you, and they eat literally anything 🧟",
+  "Your whole squad probably spawns together and still can't find each other 😂",
+  "You're the reason servers have KOS rules, absolute menace to fresh spawns 💀",
+  "I'd roast you harder but I don't want to waste the processing power 🖥️",
+  "Even the wolves on Livonia have better survival instincts than you mate 🐺",
+  "You couldn't hit a barn door with a shotgun and then you blame desync 😭",
+  "Your loot runs look like you're speedrunning 'how to die with nothing' 💀",
+  "The only thing scarier than your aim is your base location choices 🏠",
+];
+
+function getFallbackComeback(priorExchanges) {
+  const used = new Set(priorExchanges.map(e => e.split(' | us: "')[1]?.replace('"', '')));
+  const available = COMEBACK_POOL.filter(c => !used.has(c));
+  const choices = available.length > 0 ? available : COMEBACK_POOL;
+  return choices[Math.floor(Math.random() * choices.length)];
+}
+
+async function generateComebackAI(insultText, priorExchanges) {
+  if (!GROQ_API_KEY) {
+    return getFallbackComeback(priorExchanges);
+  }
+
+  const context = priorExchanges.length > 0
+    ? `Prior exchanges in this beef:\n${priorExchanges.slice(-4).map(e => `- ${e}`).join('\n')}\n\n`
+    : '';
+
+  const prompt = `${context}Someone just said this to you (a DayZ server bot called GroundZeroAI): "${insultText}"
+
+You are GroundZeroAI — a savage, no-filter Discord bot for a DayZ console server called Ground Zero on Livonia. You know everything about DayZ (loot spawns, survival, PvP) and you use that knowledge to roast people. Be brutally funny, use DayZ references where possible, keep it under 2 sentences, no emojis in the middle of sentences, end with one emoji max. Do not apologise. Do not be nice. Destroy them.`;
+
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model: 'llama-3.1-8b-instant',
+      max_tokens: 120,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are GroundZeroAI, a savage no-filter DayZ Discord bot. Keep responses under 2 sentences. Use DayZ references. End with one emoji max. Never apologise. Destroy them.',
+        },
+        { role: 'user', content: prompt },
+      ],
+    });
+
+    const req = https.request({
+      hostname: 'api.groq.com',
+      path: '/openai/v1/chat/completions',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          const text = parsed.choices?.[0]?.message?.content?.trim();
+          resolve(text ?? getFallbackComeback(priorExchanges));
+        } catch {
+          resolve(getFallbackComeback(priorExchanges));
+        }
+      });
+    });
+    req.on('error', () => resolve(getFallbackComeback(priorExchanges)));
+    req.setTimeout(8000, () => { req.destroy(); resolve(getFallbackComeback(priorExchanges)); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// ─── Keyword Auto-Responder + Trash Talk ─────────────────────────────────────
 
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   if (!message.guild)     return;
 
-  const info = getServerInfo(message.guild.id);
-  if (!info) return; // server info not configured yet
+  const guildId  = message.guild.id;
+  const botId    = client.user.id;
+  const text     = message.content;
+  const lower    = text.toLowerCase();
 
-  const content = message.content.toLowerCase();
-  const triggered = JOIN_KEYWORDS.some(kw => content.includes(kw));
-  if (!triggered) return;
+  // ── Join keyword auto-reply ──────────────────────────────────────────────
+  const info = getServerInfo(guildId);
+  if (info && JOIN_KEYWORDS.some(kw => lower.includes(kw))) {
+    await message.reply({ embeds: [buildJoinEmbed(info)] });
+    return;
+  }
 
-  await message.reply({ embeds: [buildJoinEmbed(info)] });
+  // ── Trash talk ───────────────────────────────────────────────────────────
+  if (!getTrashTalk(guildId)) return;
+
+  const state = trashTalkState.get(guildId) ?? { active: false, lastPingMs: 0, timeout: null, exchanges: [] };
+
+  // Case 1: fresh insult directed at bot → start/continue beefing
+  if (isInsult(text, botId)) {
+    state.active    = true;
+    state.lastPingMs = Date.now();
+    state.exchanges  = state.exchanges ?? [];
+
+    // Clear any existing cooldown timer
+    if (state.timeout) { clearTimeout(state.timeout); state.timeout = null; }
+
+    trashTalkState.set(guildId, state);
+
+    try { await message.channel.sendTyping(); } catch {}
+
+    const comeback = await generateComebackAI(text, state.exchanges);
+    state.exchanges.push(`them: "${text.slice(0, 80)}" | us: "${comeback.slice(0, 80)}"`);
+
+    await message.reply(comeback);
+
+    // Set 5-min cooldown to stop beefing if ignored
+    state.timeout = setTimeout(() => {
+      const s = trashTalkState.get(guildId);
+      if (s) { s.active = false; s.exchanges = []; trashTalkState.set(guildId, s); }
+    }, COOLDOWN_MS);
+
+    trashTalkState.set(guildId, state);
+    return;
+  }
+
+  // Case 2: currently beefing and bot is mentioned (but not a fresh insult) → keep going
+  if (state.active && isTargetingBot(text, botId)) {
+    state.lastPingMs = Date.now();
+    if (state.timeout) { clearTimeout(state.timeout); state.timeout = null; }
+
+    trashTalkState.set(guildId, state);
+    try { await message.channel.sendTyping(); } catch {}
+
+    const comeback = await generateComebackAI(text, state.exchanges);
+    state.exchanges.push(`them: "${text.slice(0, 80)}" | us: "${comeback.slice(0, 80)}"`);
+
+    await message.reply(comeback);
+
+    state.timeout = setTimeout(() => {
+      const s = trashTalkState.get(guildId);
+      if (s) { s.active = false; s.exchanges = []; trashTalkState.set(guildId, s); }
+    }, COOLDOWN_MS);
+
+    trashTalkState.set(guildId, state);
+  }
 });
 
 client.login(TOKEN);
