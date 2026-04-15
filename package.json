@@ -7,7 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.15.3",
-    "dotenv": "^16.4.5"
+    "@napi-rs/canvas": "^0.1.53",
+    "discord.js": "^14.15.3"
   }
 }
