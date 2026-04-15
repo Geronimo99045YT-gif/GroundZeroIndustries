@@ -1348,13 +1348,16 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  // ── Trash talk (requires mode to be on) ──────────────────────────────────
+  // ── Trash talk (requires mode to be on) ──────────────────────────────────────────
   if (!getTrashTalk(guildId)) return;
 
-  const state = trashTalkState.get(guildId) ?? {
-    active: false, lastPingMs: 0, timeout: null, exchanges: [], beefingWith: new Set(),
-  };
+  // Always store state in the map so mutations persist across messages
+  if (!trashTalkState.has(guildId)) {
+    trashTalkState.set(guildId, { active: false, lastPingMs: 0, timeout: null, exchanges: [], beefingWith: new Set() });
+  }
+  const state = trashTalkState.get(guildId);
   if (!state.beefingWith) state.beefingWith = new Set();
+  if (!state.exchanges)   state.exchanges   = [];
 
   // Case 1: Bot mentioned with an insult → start beef, track this user
   if (isInsultAtBot(text, botId)) {
@@ -1362,7 +1365,6 @@ client.on('messageCreate', async message => {
     state.lastPingMs = Date.now();
     state.beefingWith.add(authorId);
     if (state.timeout) { clearTimeout(state.timeout); state.timeout = null; }
-    trashTalkState.set(guildId, state);
 
     await fireComeback(message, guildId, state.exchanges);
     resetCooldown(state, guildId);
