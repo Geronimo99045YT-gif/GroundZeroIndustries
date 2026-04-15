@@ -2,10 +2,14 @@
 // DISCORD_TOKEN      — your bot token
 // CLIENT_ID          — your application ID
 // GROQ_API_KEY       — for AI trash talk (free at console.groq.com)
+// SUPABASE_URL       — your Supabase project URL
+// SUPABASE_KEY       — your Supabase anon/service key
 
 const TOKEN            = process.env.DISCORD_TOKEN;
 const CLIENT_ID        = process.env.CLIENT_ID;
 const GROQ_API_KEY     = process.env.GROQ_API_KEY ?? null;
+const SUPABASE_URL     = process.env.SUPABASE_URL ?? null;
+const SUPABASE_KEY     = process.env.SUPABASE_KEY ?? null;
 const https            = require('https');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,67 +25,243 @@ const fs   = require('fs');
 const path = require('path');
 const { setBotClient } = require('./server');
 
-// ─── Config (log channel stored in config.json) ───────────────────────────────
+// ─── Database Layer (Supabase) ────────────────────────────────────────────────
+// Falls back to in-memory store if Supabase is not configured
 
-const CONFIG_PATH = path.join(__dirname, 'config.json');
-
-function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); }
-  catch { return {}; }
-}
-function saveConfig(data) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2));
+const memStore = {};
+function mem(guildId) {
+  if (!memStore[guildId]) memStore[guildId] = { rules: {} };
+  return memStore[guildId];
 }
 
-let config = loadConfig();
-function getLogChannel(guildId) { return config[guildId]?.logChannelId ?? null; }
-function setLogChannel(guildId, channelId) {
-  if (!config[guildId]) config[guildId] = {};
-  config[guildId].logChannelId = channelId;
-  saveConfig(config);
+async function sbRequest(method, path2, body = null) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  return new Promise((resolve) => {
+    const hostname = new URL(SUPABASE_URL).hostname;
+    const opts = {
+      hostname, path: path2, method,
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        ...(method === 'POST' ? { 'Prefer': 'resolution=merge-duplicates,return=minimal' } : {}),
+      },
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(data ? JSON.parse(data) : null); }
+        catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
 }
 
-function getServerInfo(guildId) { return config[guildId]?.serverInfo ?? null; }
-function setServerInfo(guildId, info) {
-  if (!config[guildId]) config[guildId] = {};
-  config[guildId].serverInfo = info;
-  saveConfig(config);
+// In-memory config cache
+const configCache = {};
+
+async function getGuildConfig(guildId) {
+  if (configCache[guildId]) return configCache[guildId];
+  const rows = await sbRequest('GET', `/rest/v1/guild_config?guild_id=eq.${guildId}&limit=1`);
+  const cfg = (Array.isArray(rows) ? rows[0] : null) ?? { guild_id: guildId };
+  configCache[guildId] = cfg;
+  return cfg;
 }
 
-function getTrashTalk(guildId)  { return config[guildId]?.trashTalkEnabled ?? false; }
-function setTrashTalk(guildId, val) {
-  if (!config[guildId]) config[guildId] = {};
-  config[guildId].trashTalkEnabled = val;
-  saveConfig(config);
+async function saveGuildConfig(guildId, updates) {
+  if (!configCache[guildId]) configCache[guildId] = { guild_id: guildId };
+  Object.assign(configCache[guildId], updates, { guild_id: guildId, updated_at: new Date().toISOString() });
+  await sbRequest('POST', '/rest/v1/guild_config', configCache[guildId]);
 }
 
-function getRules(guildId)        { return config[guildId]?.rules ?? {}; }
-function getRulesChannel(guildId) { return config[guildId]?.rulesChannelId ?? null; }
-
-function setRulesChannel(guildId, channelId) {
-  if (!config[guildId]) config[guildId] = {};
-  config[guildId].rulesChannelId = channelId;
-  saveConfig(config);
+async function sbGetRules(guildId) {
+  const rows = await sbRequest('GET', `/rest/v1/guild_rules?guild_id=eq.${guildId}&order=category,position`);
+  if (!Array.isArray(rows)) return null;
+  const rules = {};
+  for (const row of rows) {
+    if (!rules[row.category]) rules[row.category] = [];
+    rules[row.category].push({ text: row.rule_text, id: row.id });
+  }
+  return rules;
 }
 
-function addRule(guildId, category, rule) {
-  if (!config[guildId]) config[guildId] = {};
-  if (!config[guildId].rules) config[guildId].rules = {};
+// ── Accessors ─────────────────────────────────────────────────────────────────
+
+async function getLogChannel(guildId) { return (await getGuildConfig(guildId)).log_channel_id ?? null; }
+async function setLogChannel(guildId, v) { await saveGuildConfig(guildId, { log_channel_id: v }); }
+
+async function getServerInfo(guildId) {
+  const c = await getGuildConfig(guildId);
+  return c.server_name ? { name: c.server_name, password: c.server_password, extra: c.server_extra } : null;
+}
+async function setServerInfo(guildId, info) {
+  await saveGuildConfig(guildId, { server_name: info.name, server_password: info.password ?? null, server_extra: info.extra ?? null });
+}
+
+async function getTrashTalk(guildId) { return (await getGuildConfig(guildId)).trash_talk_enabled ?? false; }
+async function setTrashTalk(guildId, v) { await saveGuildConfig(guildId, { trash_talk_enabled: v }); }
+
+async function getRulesChannel(guildId) { return (await getGuildConfig(guildId)).rules_channel_id ?? null; }
+async function setRulesChannel(guildId, v) { await saveGuildConfig(guildId, { rules_channel_id: v }); }
+
+async function getTargetRole(guildId) { return (await getGuildConfig(guildId)).target_role_id ?? null; }
+async function setTargetRole(guildId, v) { await saveGuildConfig(guildId, { target_role_id: v }); }
+
+async function getRules(guildId) {
+  return (await sbGetRules(guildId)) ?? mem(guildId).rules;
+}
+
+async function addRule(guildId, category, ruleText) {
   const cat = category.toLowerCase();
-  if (!config[guildId].rules[cat]) config[guildId].rules[cat] = [];
-  config[guildId].rules[cat].push(rule);
-  saveConfig(config);
-  return config[guildId].rules[cat].length;
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    const existing = await sbGetRules(guildId);
+    const pos = existing?.[cat]?.length ?? 0;
+    await sbRequest('POST', '/rest/v1/guild_rules', { guild_id: guildId, category: cat, rule_text: ruleText, position: pos });
+    const updated = await sbGetRules(guildId);
+    return updated?.[cat]?.length ?? pos + 1;
+  }
+  if (!mem(guildId).rules[cat]) mem(guildId).rules[cat] = [];
+  mem(guildId).rules[cat].push({ text: ruleText, id: Date.now() });
+  return mem(guildId).rules[cat].length;
 }
 
-function removeRule(guildId, category, index) {
+async function removeRule(guildId, category, index) {
   const cat = category.toLowerCase();
-  const rules = config[guildId]?.rules?.[cat];
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    const rules = await sbGetRules(guildId);
+    const catRules = rules?.[cat];
+    if (!catRules || index < 1 || index > catRules.length) return false;
+    await sbRequest('DELETE', `/rest/v1/guild_rules?id=eq.${catRules[index - 1].id}`);
+    return true;
+  }
+  const rules = mem(guildId).rules[cat];
   if (!rules || index < 1 || index > rules.length) return false;
   rules.splice(index - 1, 1);
-  if (rules.length === 0) delete config[guildId].rules[cat];
-  saveConfig(config);
+  if (rules.length === 0) delete mem(guildId).rules[cat];
   return true;
+}
+
+// ─── Player Stats Engine ─────────────────────────────────────────────────────
+
+// In-memory write buffer — flushes to Supabase every 2 minutes to save API calls
+const statsBuffer = new Map(); // `${guildId}:${userId}` -> pending updates
+
+async function getPlayerStats(guildId, userId) {
+  const rows = await sbRequest('GET', `/rest/v1/player_stats?guild_id=eq.${guildId}&user_id=eq.${userId}&limit=1`);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function flushStatsBuffer() {
+  if (statsBuffer.size === 0) return;
+  const entries = [...statsBuffer.entries()];
+  statsBuffer.clear();
+
+  for (const [key, data] of entries) {
+    const [guildId, userId] = key.split(':');
+    // Fetch current row
+    const current = await getPlayerStats(guildId, userId) ?? {
+      guild_id: guildId, user_id: userId,
+      message_count: 0, channel_counts: {}, hourly_activity: {},
+      message_samples: [], first_seen: new Date().toISOString(),
+    };
+
+    // Merge message count
+    current.message_count = (current.message_count ?? 0) + (data.count ?? 0);
+    current.last_seen = data.last_seen;
+    current.username = data.username;
+
+    // Merge channel counts
+    const cc = current.channel_counts ?? {};
+    for (const [chId, cnt] of Object.entries(data.channels ?? {})) {
+      cc[chId] = (cc[chId] ?? 0) + cnt;
+    }
+    current.channel_counts = cc;
+    // Update top channel
+    const topCh = Object.entries(cc).sort((a,b) => b[1]-a[1])[0];
+    if (topCh) { current.top_channel_id = topCh[0]; current.top_channel_count = topCh[1]; }
+
+    // Merge hourly activity
+    const ha = current.hourly_activity ?? {};
+    for (const [hr, cnt] of Object.entries(data.hours ?? {})) {
+      ha[hr] = (ha[hr] ?? 0) + cnt;
+    }
+    current.hourly_activity = ha;
+
+    // Rotate message samples — keep max 25, each max 120 chars
+    const samples = current.message_samples ?? [];
+    for (const s of (data.samples ?? [])) {
+      samples.push(s);
+    }
+    current.message_samples = samples.slice(-25);
+
+    await sbRequest('POST', '/rest/v1/player_stats', current);
+  }
+}
+
+// Flush every 2 minutes
+setInterval(flushStatsBuffer, 2 * 60 * 1000);
+
+function bufferMessage(guildId, userId, username, channelId, text, hour) {
+  const key = `${guildId}:${userId}`;
+  if (!statsBuffer.has(key)) {
+    statsBuffer.set(key, { count: 0, channels: {}, hours: {}, samples: [], last_seen: null, username });
+  }
+  const b = statsBuffer.get(key);
+  b.count++;
+  b.channels[channelId] = (b.channels[channelId] ?? 0) + 1;
+  b.hours[hour] = (b.hours[hour] ?? 0) + 1;
+  b.last_seen = new Date().toISOString();
+  b.username = username;
+  // Only sample messages over 15 chars to be useful
+  if (text.length > 15 && b.samples.length < 5) {
+    b.samples.push(text.slice(0, 120));
+  }
+}
+
+async function generateStyleSummary(stats) {
+  if (!GROQ_API_KEY || !stats.message_samples?.length) return null;
+
+  const samples = stats.message_samples.slice(-20).join(' | ');
+  const ha = stats.hourly_activity ?? {};
+  const peakHour = Object.entries(ha).sort((a,b)=>b[1]-a[1])[0]?.[0];
+  const peakLabel = peakHour ? `${peakHour}:00` : 'unknown';
+
+  const prompt = `Based on these Discord messages from a player, write a short 2-3 sentence personality/communication style profile. Be observational and specific. Note their tone, vocabulary, how they engage. Messages: "${samples}". Peak activity hour: ${peakLabel}. Total messages: ${stats.message_count}.`;
+
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model: 'llama-3.1-8b-instant',
+      max_tokens: 150,
+      messages: [
+        { role: 'system', content: 'You are an analyst writing concise player profiles based on their Discord messaging patterns. Be objective and specific.' },
+        { role: 'user', content: prompt },
+      ],
+    });
+    const req = https.request({
+      hostname: 'api.groq.com',
+      path: '/openai/v1/chat/completions',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const p = JSON.parse(data);
+          resolve(p.choices?.[0]?.message?.content?.trim() ?? null);
+        } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
+    req.write(body);
+    req.end();
+  });
 }
 
 // ─── Loot Data ────────────────────────────────────────────────────────────────
@@ -514,6 +694,24 @@ const commands = [
     .setDescription('Check bot latency'),
 
   new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('View a player\'s activity profile')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption(o => o.setName('user').setDescription('Player to look up').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('settargetrole')
+    .setDescription('Set the role that is allowed to use the target command')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addRoleOption(o => o.setName('role').setDescription('The role to allow targeting').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('untarget')
+    .setDescription('Remove a target from the trash talk list')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption(o => o.setName('user').setDescription('User to untarget').setRequired(true)),
+
+  new SlashCommandBuilder()
     .setName('trashtalk')
     .setDescription('Toggle trash talk mode on or off')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -586,7 +784,7 @@ client.once('ready', async () => {
 // ─── Mod Log Helper ───────────────────────────────────────────────────────────
 
 async function sendLog(guild, embed) {
-  const channelId = getLogChannel(guild.id);
+  const channelId = await getLogChannel(guild.id);
   if (!channelId) return;
   const ch = guild.channels.cache.get(channelId);
   if (ch) ch.send({ embeds: [embed] }).catch(() => {});
@@ -617,7 +815,7 @@ client.on('interactionCreate', async interaction => {
   if (commandName === 'addrule') {
     const category = interaction.options.getString('category').trim();
     const rule     = interaction.options.getString('rule').trim();
-    const num      = addRule(guild.id, category, rule);
+    const num      = await addRule(guild.id, category, rule);
     const embed = new EmbedBuilder()
       .setTitle('✅  Rule Added')
       .setColor(0x57F287)
@@ -635,7 +833,7 @@ client.on('interactionCreate', async interaction => {
   } else if (commandName === 'removerule') {
     const category = interaction.options.getString('category').trim();
     const number   = interaction.options.getInteger('number');
-    const success  = removeRule(guild.id, category, number);
+    const success  = await removeRule(guild.id, category, number);
     if (!success) {
       await interaction.reply({ content: `Rule #${number} in **${category}** not found.`, ephemeral: true });
       return;
@@ -654,7 +852,7 @@ client.on('interactionCreate', async interaction => {
 
   // /rules
   } else if (commandName === 'rules') {
-    const rules  = getRules(guild.id);
+    const rules  = await getRules(guild.id);
     const embeds = buildRulesEmbeds(rules);
     if (!embeds) {
       await interaction.reply({
@@ -679,7 +877,7 @@ client.on('interactionCreate', async interaction => {
   // /setruleschannel
   } else if (commandName === 'setruleschannel') {
     const channel = interaction.options.getChannel('channel');
-    setRulesChannel(guild.id, channel.id);
+    await setRulesChannel(guild.id, channel.id);
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -717,11 +915,101 @@ client.on('interactionCreate', async interaction => {
       ],
     });
 
+  // /stats
+  } else if (commandName === 'stats') {
+    await interaction.deferReply({ ephemeral: true });
+    const target = interaction.options.getUser('user');
+
+    // Flush buffer first so we have latest data
+    await flushStatsBuffer();
+
+    const stats = await getPlayerStats(guild.id, target.id);
+    if (!stats || stats.message_count === 0) {
+      await interaction.editReply({ content: `No data found for ${target.username} yet — they may not have chatted since the bot was set up.` });
+      return;
+    }
+
+    // Build activity breakdown
+    const cc = stats.channel_counts ?? {};
+    const topChannels = Object.entries(cc)
+      .sort((a,b) => b[1]-a[1])
+      .slice(0, 3)
+      .map(([id, cnt]) => `<#${id}> — ${cnt} msgs`)
+      .join('\n') || 'No data';
+
+    const ha = stats.hourly_activity ?? {};
+    const peakHour = Object.entries(ha).sort((a,b)=>b[1]-a[1])[0];
+    const peakLabel = peakHour ? `${peakHour[0]}:00 UTC (${peakHour[1]} msgs)` : 'Unknown';
+
+    const firstSeen = stats.first_seen ? `<t:${Math.floor(new Date(stats.first_seen).getTime()/1000)}:D>` : 'Unknown';
+    const lastSeen  = stats.last_seen  ? `<t:${Math.floor(new Date(stats.last_seen).getTime()/1000)}:R>`  : 'Unknown';
+
+    // Regenerate style summary if stale (older than 24h) or missing
+    let summary = stats.style_summary;
+    const summaryAge = stats.style_updated_at ? Date.now() - new Date(stats.style_updated_at).getTime() : Infinity;
+    if ((!summary || summaryAge > 24 * 60 * 60 * 1000) && stats.message_samples?.length > 3) {
+      summary = await generateStyleSummary(stats);
+      if (summary) {
+        await sbRequest('POST', '/rest/v1/player_stats', {
+          ...stats,
+          style_summary: summary,
+          style_updated_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📊  ${target.username} — Player Profile`)
+      .setColor(0x5865F2)
+      .setThumbnail(target.displayAvatarURL())
+      .addFields(
+        { name: '💬 Total Messages', value: `${stats.message_count.toLocaleString()}`, inline: true },
+        { name: '📅 First Seen',     value: firstSeen,  inline: true },
+        { name: '🕐 Last Active',    value: lastSeen,   inline: true },
+        { name: '🏆 Most Active In', value: topChannels, inline: false },
+        { name: '⏰ Peak Hours',     value: peakLabel,  inline: false },
+      )
+      .setFooter({ text: `User ID: ${target.id}  •  GroundZeroAI` })
+      .setTimestamp();
+
+    if (summary) {
+      embed.addFields({ name: '🧠 Messaging Style', value: summary });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+
+  // /settargetrole
+  } else if (commandName === 'settargetrole') {
+    const role = interaction.options.getRole('role');
+    await setTargetRole(guild.id, role.id);
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('✅  Target Role Set')
+          .setColor(0x57F287)
+          .setDescription(`Only members with <@&${role.id}> can now use the target command.`)
+          .setFooter({ text: 'Saved to database' })
+          .setTimestamp(),
+      ],
+      ephemeral: true,
+    });
+
+  // /untarget
+  } else if (commandName === 'untarget') {
+    const target = interaction.options.getUser('user');
+    const targets = activeTargets.get(guild.id);
+    if (targets?.has(target.id)) {
+      targets.delete(target.id);
+      await interaction.reply({ embeds: [new EmbedBuilder().setTitle('✅  Target Removed').setColor(0x57F287).setDescription(`<@${target.id}> is no longer being targeted.`).setTimestamp()], ephemeral: true });
+    } else {
+      await interaction.reply({ content: `${target.username} isn't currently a target.`, ephemeral: true });
+    }
+
   // /trashtalk
   } else if (commandName === 'trashtalk') {
-    const current = getTrashTalk(guild.id);
+    const current = await getTrashTalk(guild.id);
     const newVal  = !current;
-    setTrashTalk(guild.id, newVal);
+    await setTrashTalk(guild.id, newVal);
     const embed = new EmbedBuilder()
       .setTitle(newVal ? '🗣️  Trash Talk Mode: ON' : '🤐  Trash Talk Mode: OFF')
       .setColor(newVal ? 0xED4245 : 0x57F287)
@@ -737,7 +1025,7 @@ client.on('interactionCreate', async interaction => {
     const name     = interaction.options.getString('name');
     const password = interaction.options.getString('password') ?? null;
     const extra    = interaction.options.getString('extra')    ?? null;
-    setServerInfo(guild.id, { name, password, extra });
+    await setServerInfo(guild.id, { name, password, extra });
     const embed = new EmbedBuilder()
       .setTitle('✅ Server Info Saved')
       .setColor(0x57F287)
@@ -752,7 +1040,7 @@ client.on('interactionCreate', async interaction => {
 
   // /join
   } else if (commandName === 'join') {
-    const info = getServerInfo(guild.id);
+    const info = await getServerInfo(guild.id);
     if (!info) {
       await interaction.reply({
         embeds: [
@@ -770,7 +1058,7 @@ client.on('interactionCreate', async interaction => {
   // /setlogchannel
   } else if (commandName === 'setlogchannel') {
     const channel = interaction.options.getChannel('channel');
-    setLogChannel(guild.id, channel.id);
+    await setLogChannel(guild.id, channel.id);
     const embed = new EmbedBuilder()
       .setTitle('✅  Log Channel Set')
       .setColor(0x57F287)
@@ -791,7 +1079,7 @@ client.on('interactionCreate', async interaction => {
 
   // /logchannel
   } else if (commandName === 'logchannel') {
-    const channelId = getLogChannel(guild.id);
+    const channelId = await getLogChannel(guild.id);
     const embed = new EmbedBuilder().setColor(0x5865F2).setTimestamp();
     if (channelId) {
       const ch = guild.channels.cache.get(channelId);
@@ -1058,7 +1346,7 @@ function buildRulesEmbeds(rules) {
     const emoji = CATEGORY_EMOJI_MAP[cat.toLowerCase()] ?? '📌';
     const label = cat.charAt(0).toUpperCase() + cat.slice(1);
     const ruleList = rules[cat]
-      .map((r, idx) => `**${idx + 1}.** ${r}`)
+      .map((r, idx) => `**${idx + 1}.** ${typeof r === 'object' ? r.text : r}`)
       .join('\n');
 
     return new EmbedBuilder()
@@ -1070,12 +1358,12 @@ function buildRulesEmbeds(rules) {
 }
 
 async function postRulesToChannel(guild) {
-  const channelId = getRulesChannel(guild.id);
+  const channelId = await getRulesChannel(guild.id);
   if (!channelId) return false;
   const ch = guild.channels.cache.get(channelId);
   if (!ch) return false;
 
-  const rules = getRules(guild.id);
+  const rules = await getRules(guild.id);
   const embeds = buildRulesEmbeds(rules);
   if (!embeds) return false;
 
@@ -1147,6 +1435,7 @@ function buildJoinEmbed(info) {
 // ─── Trash Talk Engine ───────────────────────────────────────────────────────
 
 // Protected users — bot defends these regardless of trash talk mode
+// plaindelta: 814506722894282762 | imr4ptor: 928651245714042910
 const PROTECTED_IDS = new Set(['814506722894282762', '928651245714042910']);
 
 // Per-guild beefing state
@@ -1370,6 +1659,8 @@ You are GroundZeroAI — a Discord bot that always wins arguments. Match the ene
 // ─── Conversation Engine ─────────────────────────────────────────────────────
 // Stores recent conversation history per channel for context
 const chatHistory = new Map(); // channelId -> [{role, content}]
+// Tracks users currently being targeted per guild: guildId -> Set<userId>
+const activeTargets = new Map();
 const MAX_HISTORY = 10; // keep last 10 exchanges
 
 function getChatHistory(channelId) {
@@ -1480,11 +1771,16 @@ client.on('messageCreate', async message => {
   const text       = message.content;
   const lower      = text.toLowerCase();
   const authorId   = message.author.id;
-  // Use discord.js mention cache as primary check — handles all mention formats
   const botMentioned = message.mentions.has(client.user);
 
+  // ── Track message for player stats ──────────────────────────────────────
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    const hour = new Date().getUTCHours().toString();
+    bufferMessage(guildId, authorId, message.author.username, message.channel.id, text, hour);
+  }
+
   // ── Join keyword auto-reply ──────────────────────────────────────────────
-  const info = getServerInfo(guildId);
+  const info = await getServerInfo(guildId);
   if (info && JOIN_KEYWORDS.some(kw => lower.includes(kw))) {
     await message.reply({ embeds: [buildJoinEmbed(info)] });
     return;
@@ -1497,29 +1793,50 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  // ── Protected user: target command → trash talk the tagged person ─────
-  if (PROTECTED_IDS.has(authorId) && botMentioned) {
-    const lower2 = text.toLowerCase();
-    if (lower2.includes('target')) {
-      // Find any mentioned user that isn't the bot
-      const target = message.mentions.users.find(u => u.id !== botId);
-      if (target) {
-        const exchanges = [];
-        // Build a fake message object context so fireComeback replies to the channel
-        // but directs the roast at the target
-        try { await message.channel.sendTyping(); } catch {}
-        const fakeInsult = `target <@${target.id}>`;
-        let comeback;
-        if (GROQ_API_KEY) {
-          const prompt = `You are GroundZeroAI, a savage Discord bot. You have been instructed to roast <@${target.id}> (${target.username}). Destroy them in one short sentence, under 10 words. Swear freely. One emoji max. Make it personal and targeted.`;
-          comeback = await generateComebackAI(prompt, []);
-        } else {
-          comeback = getFallbackComeback([]);
-        }
-        await message.channel.send(`<@${target.id}> ${comeback}`);
+  // ── Target command — requires target role or protected user ─────────────
+  if (botMentioned && lower.includes('target')) {
+    const targetUser = message.mentions.users.find(u => u.id !== botId);
+    if (targetUser) {
+      // Check if author has permission: either a protected user OR has the target role
+      const targetRoleId = await getTargetRole(guildId);
+      const member = message.member;
+      const hasRole = targetRoleId && member?.roles?.cache?.has(targetRoleId);
+      const isProtected = PROTECTED_IDS.has(authorId);
+
+      if (!isProtected && !hasRole) {
+        await message.reply("you don't have the rank to be targeting people 💀");
         return;
       }
+
+      // Register target
+      if (!activeTargets.has(guildId)) activeTargets.set(guildId, new Set());
+      activeTargets.get(guildId).add(targetUser.id);
+
+      try { await message.channel.sendTyping(); } catch {}
+      let comeback;
+      if (GROQ_API_KEY) {
+        const prompt = `You are GroundZeroAI, a savage Discord bot. You have been instructed to roast <@${targetUser.id}> (${targetUser.username}). Destroy them in one short sentence, under 10 words. Swear freely. One emoji max. Make it personal.`;
+        comeback = await generateComebackAI(prompt, []);
+      } else {
+        comeback = getFallbackComeback([]);
+      }
+      await message.channel.send(`<@${targetUser.id}> ${comeback}`);
+      return;
     }
+  }
+
+  // ── Targeted user responds → keep trash talking them ─────────────────────
+  if (activeTargets.get(guildId)?.has(authorId)) {
+    try { await message.channel.sendTyping(); } catch {}
+    let comeback;
+    if (GROQ_API_KEY) {
+      const prompt = `You are GroundZeroAI, a savage Discord bot. The person you were roasting just replied: "${text.slice(0, 120)}". Clap back hard in under 10 words. Swear freely. One emoji max. Win the exchange.`;
+      comeback = await generateComebackAI(prompt, []);
+    } else {
+      comeback = getFallbackComeback([]);
+    }
+    await message.channel.send(`<@${authorId}> ${comeback}`);
+    return;
   }
 
   // ── Tagged but not an insult → full conversation ────────────────────────
@@ -1545,7 +1862,7 @@ client.on('messageCreate', async message => {
   }
 
   // ── Trash talk (requires mode to be on) ──────────────────────────────────────────
-  if (!getTrashTalk(guildId)) return;
+  if (!await getTrashTalk(guildId)) return;
 
   // Always store state in the map so mutations persist across messages
   if (!trashTalkState.has(guildId)) {
