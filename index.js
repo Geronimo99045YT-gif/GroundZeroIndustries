@@ -1165,22 +1165,27 @@ const INSULT_WORDS = [
   'braindead','thick','nonce','rat','snitch','virgin',
 ];
 
+// Checks both <@ID> and <@!ID> formats (Discord uses both)
+function hasMention(text, id) {
+  return text.includes(`<@${id}>`) || text.includes(`<@!${id}>`);
+}
+
 // Check if a message is an insult directed at the bot (must @mention it)
 function isInsultAtBot(text, botId) {
-  if (!text.includes(`<@${botId}>`)) return false;
+  if (!hasMention(text, botId)) return false;
   const lower = text.toLowerCase();
   return INSULT_WORDS.some(w => lower.includes(w));
 }
 
 // Check if a message mentions the bot at all
 function mentionsBot(text, botId) {
-  return text.includes(`<@${botId}>`);
+  return hasMention(text, botId);
 }
 
 // Check if a message is insulting a protected user (mention + insult word)
 function isInsultAtProtected(text) {
   const lower = text.toLowerCase();
-  const mentionsProtected = [...PROTECTED_IDS].some(id => text.includes(`<@${id}>`));
+  const mentionsProtected = [...PROTECTED_IDS].some(id => hasMention(text, id));
   if (!mentionsProtected) return false;
   return INSULT_WORDS.some(w => lower.includes(w));
 }
@@ -1327,11 +1332,13 @@ client.on('messageCreate', async message => {
   if (message.author.bot) return;
   if (!message.guild)     return;
 
-  const guildId  = message.guild.id;
-  const botId    = client.user.id;
-  const text     = message.content;
-  const lower    = text.toLowerCase();
-  const authorId = message.author.id;
+  const guildId    = message.guild.id;
+  const botId      = client.user.id;
+  const text       = message.content;
+  const lower      = text.toLowerCase();
+  const authorId   = message.author.id;
+  // Use discord.js mention cache as primary check — handles all mention formats
+  const botMentioned = message.mentions.has(client.user);
 
   // ── Join keyword auto-reply ──────────────────────────────────────────────
   const info = getServerInfo(guildId);
@@ -1360,7 +1367,7 @@ client.on('messageCreate', async message => {
   if (!state.exchanges)   state.exchanges   = [];
 
   // Case 1: Bot mentioned with an insult → start beef, track this user
-  if (isInsultAtBot(text, botId)) {
+  if (botMentioned && INSULT_WORDS.some(w => lower.includes(w))) {
     state.active = true;
     state.lastPingMs = Date.now();
     state.beefingWith.add(authorId);
@@ -1386,7 +1393,7 @@ client.on('messageCreate', async message => {
   }
 
   // Case 3: Currently beefing — someone else mentions the bot → drag them in too
-  if (state.active && mentionsBot(text, botId)) {
+  if (state.active && botMentioned) {
     state.lastPingMs = Date.now();
     state.beefingWith.add(authorId);
     if (state.timeout) { clearTimeout(state.timeout); state.timeout = null; }
