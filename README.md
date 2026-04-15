@@ -1,101 +1,136 @@
 # 🪖 DayZ Console Bot
 
-A Discord bot built for DayZ console communities. Includes a loot finder with live spawn heatmaps, DayZ tips, moderation tools, and a status web page — all in one.
+A Discord bot built for DayZ console (Xbox) communities. Includes a loot finder with live spawn heatmaps, server join info, server rules, DayZ tips, moderation tools, and a live status web page.
 
 ---
 
-## Files
+## 📁 Files
 
 | File | Purpose |
 |---|---|
-| `index.js` | Main bot file — start this |
-| `server.js` | Status web page (starts automatically with the bot) |
+| `index.js` | Main bot — this is what runs |
+| `server.js` | Status web page (auto-starts with the bot) |
 | `package.json` | Node.js dependencies |
-| `livonia_map.jpg` | Livonia map used for loot heatmaps |
-| `loot_items.json` | Parsed loot table (from `types.xml`) |
-| `loot_buildings.json` | Building positions (from `mapgrouppos.xml`) |
-| `config.json` | Auto-generated at runtime — stores log channel settings |
+| `livonia_map.jpg` | Livonia map image used for loot heatmaps |
+| `loot_items.json` | Parsed loot table from `types.xml` |
+| `loot_buildings.json` | Building positions from `mapgrouppos.xml` |
+| `config.json` | Auto-generated at runtime — stores all settings |
 
 ---
 
-## Setup
+## 🚀 Render Setup (Step by Step)
 
-### 1. Create the bot on Discord
+### Step 1 — Create the Discord bot
 
-1. Go to https://discord.com/developers/applications
-2. Click **New Application** and give it a name
-3. Go to **Bot** → **Reset Token** → copy the token
-4. Under **Bot**, enable **Server Members Intent**
+1. Go to **https://discord.com/developers/applications**
+2. Click **New Application**, give it a name
+3. Go to **Bot** → click **Reset Token** → copy the token (save it somewhere safe)
+4. Under **Bot**, enable these two intents:
+   - ✅ **Server Members Intent**
+   - ✅ **Message Content Intent**
 5. Go to **OAuth2 → URL Generator**:
-   - Scopes: `bot`, `applications.commands`
-   - Bot permissions: `Kick Members`, `Ban Members`, `Moderate Members`, `Send Messages`, `Embed Links`, `Attach Files`
-6. Open the generated URL to invite the bot to your server
+   - Scopes: tick `bot` and `applications.commands`
+   - Bot Permissions: tick `Kick Members`, `Ban Members`, `Moderate Members`, `Send Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Manage Messages`
+6. Copy the generated URL at the bottom and open it in your browser to invite the bot to your server
 
-### 2. Deploy on Render
+---
 
-1. Push all files to a GitHub repo
-2. Create a new **Web Service** on Render pointing to the repo
-3. Set the following:
-   - **Build command:** `npm install`
-   - **Start command:** `node index.js`
-4. Under **Environment**, add these two secrets:
+### Step 2 — Put the files on GitHub
 
-| Variable | Value |
+1. Create a **free GitHub account** at https://github.com if you don't have one
+2. Click **New repository**, name it (e.g. `dayz-bot`), set it to **Private**, click Create
+3. Upload all the bot files:
+   - `index.js`
+   - `server.js`
+   - `package.json`
+   - `livonia_map.jpg`
+   - `loot_items.json`
+   - `loot_buildings.json`
+4. Do **not** upload `config.json` — it gets created automatically when the bot runs
+
+---
+
+### Step 3 — Deploy on Render
+
+1. Go to **https://render.com** and sign in (free account works)
+2. Click **New** → **Web Service**
+3. Connect your GitHub account and select your bot repo
+4. Fill in the settings:
+
+| Setting | Value |
 |---|---|
-| `DISCORD_TOKEN` | Your bot token |
-| `CLIENT_ID` | Your application ID (General Information tab) |
+| **Name** | anything you like |
+| **Region** | closest to you |
+| **Branch** | `main` |
+| **Runtime** | `Node` |
+| **Build Command** | `npm install` |
+| **Start Command** | `node index.js` |
 
-> `PORT` is set automatically by Render — no need to add it.
+5. Scroll down to **Environment Variables** and add these two:
 
-### 3. First run
+| Key | Value |
+|---|---|
+| `DISCORD_TOKEN` | your bot token from Step 1 |
+| `CLIENT_ID` | your Application ID (found on the General Information page in the developer portal) |
 
-On first boot the bot will:
-- Log in and print its tag to the console
-- Register all slash commands globally (takes up to 1 hour to appear in Discord)
-- Start the status web page on your Render URL
+6. Click **Create Web Service**
 
----
-
-## Status Page
-
-Once deployed, your Render URL (e.g. `https://your-bot.onrender.com`) serves a live status page showing:
-
-- 🟢 Pulsing green dot when online / 🔴 red when offline
-- Bot ping (ms)
-- Uptime
-- Number of servers the bot is in
-- List of all commands
-
-A JSON endpoint is also available at `/status` for programmatic monitoring.
-
-The page auto-refreshes every 30 seconds.
+Render will build and deploy the bot. First deploy takes ~2 minutes.
 
 ---
 
-## Commands
+### Step 4 — First run checklist
+
+- ✅ Bot comes online in your Discord server (green dot)
+- ✅ Slash commands appear — **allow up to 1 hour** for Discord to propagate them globally
+- ✅ Your Render URL (e.g. `https://your-bot.onrender.com`) shows the status page
+- ✅ Run `/setlogchannel #your-log-channel` to enable mod logging
+- ✅ Run `/setserver` to configure your Xbox server join info
+- ✅ Run `/addrule` a few times to add your rules, then `/setruleschannel` and `/postrules`
+
+---
+
+## 💬 Commands
 
 ### 🔍 Loot Finder
 
 | Command | Description |
 |---|---|
-| `/loot [item]` | Search for any item by classname and get a spawn heatmap |
+| `/loot [item]` | Generates a spawn heatmap for any item on Livonia |
 
-- Searches 990 active items parsed from the server's `types.xml`
-- Generates a heatmap image overlaid on the Livonia map showing where the item spawns
-- Heatmap colour ramp: **blue → cyan → green → yellow → red** (low → high density)
-- Respects tier zone restrictions (Tier 1 / 2 / 3) from the map economy
-- Shows spawn slot counts per zone, location types, rarity, and max-in-world count
-- If multiple items match your search, lists them so you can pick the right classname
+- Searches 990 active items from your `types.xml`
+- Overlays a colour-coded heatmap on the Livonia map (blue = low density → red = high)
+- Respects tier zones: 🟢 Tier 1 North · 🔵 Tier 2 Middle · 🟡 Tier 3 South
+- Shows spawn slot counts, location types, rarity and max-in-world
 - Example classnames: `AK74`, `M4A1`, `BandageDressing`, `SalineIVBag`, `Jeans_Blue`
 
-**Tier zones on Livonia:**
+---
 
-| Zone | Colour | Area |
+### 🎮 Server Join Info
+
+| Command | Permission | Description |
 |---|---|---|
-| Tier 1 | 🟢 Green | North |
-| Tier 2 | 🔵 Blue | Middle |
-| Tier 3 | 🟡 Yellow | South |
-| Special | 🟣 Purple | Unique / contaminated |
+| `/setserver` | Admin | Set Xbox server name, host gamertag, password, extra info |
+| `/join` | Everyone | Shows step-by-step how to find and join the server |
+
+- The bot also **auto-detects** messages like "how do I join", "whats the server", "cant find the server" etc. and replies automatically
+
+---
+
+### 📜 Server Rules
+
+| Command | Permission | Description |
+|---|---|---|
+| `/addrule [category] [rule]` | Admin | Add a rule to a category |
+| `/removerule [category] [number]` | Admin | Remove a rule by number |
+| `/setruleschannel #channel` | Admin | Set the channel rules get posted to |
+| `/postrules` | Admin | Post or refresh rules in the rules channel |
+| `/rules` | Everyone | View all rules inline |
+
+- Rules are split into categories — name them whatever you like (General, Combat, Base, Vehicles etc.)
+- Each category gets its own colour-coded embed with emoji
+- `/postrules` wipes old bot messages in the rules channel and reposts everything fresh
+- After adding or removing rules, run `/postrules` to refresh the channel
 
 ---
 
@@ -103,68 +138,67 @@ The page auto-refreshes every 30 seconds.
 
 | Command | Description |
 |---|---|
-| `/tip` | Get a random DayZ console tip |
-| `/tip [category]` | Get a tip from a specific category |
-| `/tips` | List all tip categories |
+| `/tip` | Random DayZ console tip |
+| `/tip [category]` | Tip from a specific category |
+| `/tips` | List all categories |
 
-**Tip categories:** Beginner, Survival, Medical, Combat, Loot, Vehicles, Base
-
-50+ handwritten tips covering console-specific gameplay across all categories.
+**Categories:** Beginner · Survival · Medical · Combat · Loot · Vehicles · Base
 
 ---
 
 ### 🔨 Moderation
 
-All mod actions are posted as embeds to your configured log channel.
+All mod actions post an embed to your configured log channel.
 
 | Command | Permission | Description |
 |---|---|---|
-| `/kick @user [reason]` | Kick Members | Kicks a member from the server |
-| `/ban @user [reason]` | Ban Members | Bans a member from the server |
-| `/mute @user [duration] [reason]` | Moderate Members | Times out a member (1 min – 28 days) |
-| `/unmute @user` | Moderate Members | Removes a timeout from a member |
-| `/warn @user [reason]` | Moderate Members | Warns a member and DMs them the reason |
+| `/kick @user [reason]` | Kick Members | Kick a member |
+| `/ban @user [reason]` | Ban Members | Ban a member |
+| `/mute @user [duration] [reason]` | Moderate Members | Timeout a member (1 min – 28 days) |
+| `/unmute @user` | Moderate Members | Remove a timeout |
+| `/warn @user [reason]` | Moderate Members | Warn a member — DMs them the reason |
+| `/setlogchannel #channel` | Admin | Set the mod log channel |
+| `/logchannel` | Admin | Show the current log channel |
 
 ---
 
-### ⚙️ Admin / Config
-
-| Command | Permission | Description |
-|---|---|---|
-| `/setlogchannel #channel` | Administrator | Set the channel for mod action logs |
-| `/logchannel` | Administrator | Show the currently configured log channel |
-
-- The log channel is saved to `config.json` and persists across restarts
-- When set, a confirmation message is posted to the chosen channel
-- No environment variable needed — configured entirely through Discord
-
----
-
-### 🎲 Fun / Utility
+### 🎲 Utility
 
 | Command | Description |
 |---|---|
 | `/roll [sides]` | Roll a dice — default d6, up to d1000 |
-| `/ping` | Check the bot's websocket latency |
+| `/ping` | Check bot websocket latency |
 
 ---
 
-## Secrets
+## 🌐 Status Page
 
-Only two environment variables are required — set these in Render's Environment tab:
+Your Render URL serves a live status page showing:
+- 🟢 Pulsing green dot when online / 🔴 red when offline
+- Ping · Uptime · Server count
+- Full command list
 
-```
-DISCORD_TOKEN=your_bot_token_here
-CLIENT_ID=your_application_id_here
-```
-
-Never commit these to GitHub. The `.gitignore` already excludes `.env` and `config.json`.
+Also available as JSON at `/status` for uptime monitors.
+Page auto-refreshes every 30 seconds.
 
 ---
 
-## Notes
+## 🔒 Secrets
 
-- Slash commands are registered **globally** on startup — allow up to 1 hour for them to appear in Discord after first boot
-- The loot heatmap uses building positions from `mapgrouppos.xml` and item data from `types.xml` — if you update your economy files, regenerate `loot_items.json` and `loot_buildings.json`
-- The Livonia map image is cached in memory after first load for fast repeated heatmap generation
-- `config.json` is auto-created at runtime and stores per-server log channel settings — do not commit it
+Only two env vars needed — set in Render's Environment tab:
+
+```
+DISCORD_TOKEN=your_bot_token
+CLIENT_ID=your_application_id
+```
+
+Never commit these to GitHub. Keep your repo **Private**.
+
+---
+
+## 📝 Notes
+
+- Slash commands register globally on startup — up to **1 hour** to appear in Discord after first boot
+- `config.json` is created automatically and stores log channel, rules channel, server info and rules — do **not** commit it
+- The Livonia map image is cached in memory after first load for fast heatmap generation
+- If you update your economy files (`types.xml` / `mapgrouppos.xml`), regenerate `loot_items.json` and `loot_buildings.json`

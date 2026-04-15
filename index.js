@@ -38,6 +38,42 @@ function setLogChannel(guildId, channelId) {
   saveConfig(config);
 }
 
+function getServerInfo(guildId) { return config[guildId]?.serverInfo ?? null; }
+function setServerInfo(guildId, info) {
+  if (!config[guildId]) config[guildId] = {};
+  config[guildId].serverInfo = info;
+  saveConfig(config);
+}
+
+function getRules(guildId)        { return config[guildId]?.rules ?? {}; }
+function getRulesChannel(guildId) { return config[guildId]?.rulesChannelId ?? null; }
+
+function setRulesChannel(guildId, channelId) {
+  if (!config[guildId]) config[guildId] = {};
+  config[guildId].rulesChannelId = channelId;
+  saveConfig(config);
+}
+
+function addRule(guildId, category, rule) {
+  if (!config[guildId]) config[guildId] = {};
+  if (!config[guildId].rules) config[guildId].rules = {};
+  const cat = category.toLowerCase();
+  if (!config[guildId].rules[cat]) config[guildId].rules[cat] = [];
+  config[guildId].rules[cat].push(rule);
+  saveConfig(config);
+  return config[guildId].rules[cat].length;
+}
+
+function removeRule(guildId, category, index) {
+  const cat = category.toLowerCase();
+  const rules = config[guildId]?.rules?.[cat];
+  if (!rules || index < 1 || index > rules.length) return false;
+  rules.splice(index - 1, 1);
+  if (rules.length === 0) delete config[guildId].rules[cat];
+  saveConfig(config);
+  return true;
+}
+
 // ─── Loot Data ────────────────────────────────────────────────────────────────
 
 const LOOT_ITEMS     = JSON.parse(fs.readFileSync(path.join(__dirname, 'loot_items.json'),     'utf8'));
@@ -362,9 +398,33 @@ const categoryChoices = Object.keys(tips).map(k => ({
   value: k,
 }));
 
+// ─── Join Keywords ────────────────────────────────────────────────────────────
+// If any of these appear in a message the bot replies with server info
+
+const JOIN_KEYWORDS = [
+  'how do i join', 'how to join', 'how do i find', 'how can i join',
+  'whats the server', "what's the server", 'server name', 'server details',
+  'how do i play', 'how to find the server', 'where is the server',
+  'cant find the server', "can't find the server", 'server info',
+  'how do i get on', 'how do i connect', 'what server',
+];
+
 // ─── Slash Command Definitions ────────────────────────────────────────────────
 
 const commands = [
+  new SlashCommandBuilder()
+    .setName('setserver')
+    .setDescription('Set the DayZ Xbox server info shown to players who ask how to join')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('name').setDescription('Server name as it appears in DayZ').setRequired(true))
+    .addStringOption(o => o.setName('gamertag').setDescription('Host gamertag players need to follow').setRequired(true))
+    .addStringOption(o => o.setName('password').setDescription('Server password (leave blank if none)'))
+    .addStringOption(o => o.setName('extra').setDescription('Any extra join instructions')),
+
+  new SlashCommandBuilder()
+    .setName('join')
+    .setDescription('How to join the DayZ server'),
+
   new SlashCommandBuilder()
     .setName('setlogchannel')
     .setDescription('Set the channel where mod actions are logged')
@@ -444,12 +504,52 @@ const commands = [
     .setName('ping')
     .setDescription('Check bot latency'),
 
+  // ── Rules ──────────────────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('addrule')
+    .setDescription('Add a rule to a category')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('category').setDescription('Category name (e.g. General, Combat, Base)').setRequired(true))
+    .addStringOption(o => o.setName('rule').setDescription('The rule text').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('removerule')
+    .setDescription('Remove a rule from a category')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('category').setDescription('Category name').setRequired(true))
+    .addIntegerOption(o => o.setName('number').setDescription('Rule number to remove').setRequired(true).setMinValue(1)),
+
+  new SlashCommandBuilder()
+    .setName('rules')
+    .setDescription('Show the server rules'),
+
+  new SlashCommandBuilder()
+    .setName('setruleschannel')
+    .setDescription('Set the channel where rules are posted')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addChannelOption(o =>
+      o.setName('channel')
+        .setDescription('Rules channel')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('postrules')
+    .setDescription('Post or refresh the rules in the rules channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
 ].map(c => c.toJSON());
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
   partials: [Partials.GuildMember],
 });
 
@@ -493,8 +593,130 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
   const { commandName, guild, user } = interaction;
 
+  // /addrule
+  if (commandName === 'addrule') {
+    const category = interaction.options.getString('category').trim();
+    const rule     = interaction.options.getString('rule').trim();
+    const num      = addRule(guild.id, category, rule);
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Rule Added')
+      .setColor(Colors.Green)
+      .addFields(
+        { name: 'Category', value: category.charAt(0).toUpperCase() + category.slice(1), inline: true },
+        { name: 'Rule #',   value: `${num}`, inline: true },
+        { name: 'Text',     value: rule },
+      )
+      .setFooter({ text: 'Run /postrules to update the rules channel.' })
+      .setTimestamp();
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+  // /removerule
+  } else if (commandName === 'removerule') {
+    const category = interaction.options.getString('category').trim();
+    const number   = interaction.options.getInteger('number');
+    const success  = removeRule(guild.id, category, number);
+    if (!success) {
+      await interaction.reply({ content: `Rule #${number} in **${category}** not found.`, ephemeral: true });
+      return;
+    }
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('🗑️ Rule Removed')
+          .setColor(Colors.Orange)
+          .setDescription(`Rule #${number} from **${category}** has been removed.`)
+          .setFooter({ text: 'Run /postrules to update the rules channel.' })
+          .setTimestamp(),
+      ],
+      ephemeral: true,
+    });
+
+  // /rules
+  } else if (commandName === 'rules') {
+    const rules  = getRules(guild.id);
+    const embeds = buildRulesEmbeds(rules);
+    if (!embeds) {
+      await interaction.reply({ content: 'No rules have been set yet. An admin can add rules with `/addrule`.', ephemeral: true });
+      return;
+    }
+    const header = new EmbedBuilder()
+      .setTitle('📜  Server Rules')
+      .setDescription('Read and follow the rules below. Ignorance is not an excuse.')
+      .setColor(0x8B0000)
+      .setTimestamp();
+    await interaction.reply({ embeds: [header, ...embeds] });
+
+  // /setruleschannel
+  } else if (commandName === 'setruleschannel') {
+    const channel = interaction.options.getChannel('channel');
+    setRulesChannel(guild.id, channel.id);
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('✅ Rules Channel Set')
+          .setColor(Colors.Green)
+          .setDescription(`Rules will be posted to ${channel}.\nRun \`/postrules\` to post them now.`)
+          .setTimestamp(),
+      ],
+      ephemeral: true,
+    });
+
+  // /postrules
+  } else if (commandName === 'postrules') {
+    await interaction.deferReply({ ephemeral: true });
+    const success = await postRulesToChannel(guild);
+    if (!success) {
+      await interaction.editReply({ content: 'Failed — make sure you have set a rules channel with `/setruleschannel` and that rules exist.' });
+      return;
+    }
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('✅ Rules Posted')
+          .setColor(Colors.Green)
+          .setDescription('Rules channel has been updated.')
+          .setTimestamp(),
+      ],
+    });
+
+  // /setserver
+  } else if (commandName === 'setserver') {
+    const name     = interaction.options.getString('name');
+    const gamertag = interaction.options.getString('gamertag');
+    const password = interaction.options.getString('password') ?? null;
+    const extra    = interaction.options.getString('extra')    ?? null;
+    setServerInfo(guild.id, { name, gamertag, password, extra });
+    const embed = new EmbedBuilder()
+      .setTitle('✅ Server Info Saved')
+      .setColor(Colors.Green)
+      .addFields(
+        { name: 'Server Name', value: name,     inline: true },
+        { name: 'Gamertag',    value: gamertag, inline: true },
+        { name: 'Password',    value: password ?? 'None', inline: true },
+      )
+      .setDescription('Players who ask how to join will now get this info automatically, and `/join` will show it.')
+      .setTimestamp();
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+  // /join
+  } else if (commandName === 'join') {
+    const info = getServerInfo(guild.id);
+    if (!info) {
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('⚠️ Server info not set up yet')
+            .setColor(Colors.Yellow)
+            .setDescription('An admin needs to run `/setserver` first to configure the server details.'),
+        ],
+        ephemeral: true,
+      });
+      return;
+    }
+    await interaction.reply({ embeds: [buildJoinEmbed(info)] });
+
   // /setlogchannel
-  if (commandName === 'setlogchannel') {
+  } else if (commandName === 'setlogchannel') {
     const channel = interaction.options.getChannel('channel');
     setLogChannel(guild.id, channel.id);
     const embed = new EmbedBuilder()
@@ -742,6 +964,106 @@ client.on('interactionCreate', async interaction => {
       ],
     }).catch(() => {});
   }
+});
+
+// ─── Rules Embed Builder ─────────────────────────────────────────────────────
+
+const CATEGORY_COLORS = [0x8B0000, 0x1a6b8a, 0x4a7c3f, 0x7b5ea7, 0xc07a1a, 0x8a3a3a];
+const CATEGORY_EMOJI_MAP = {
+  general:   '📋', combat:  '⚔️',  base:    '🏠',
+  vehicles:  '🚗', looting: '🎒', kos:     '💀',
+  reporting: '📢', chat:    '💬', other:   '📌',
+};
+
+function buildRulesEmbeds(rules) {
+  const categories = Object.keys(rules);
+  if (categories.length === 0) return null;
+
+  return categories.map((cat, i) => {
+    const emoji = CATEGORY_EMOJI_MAP[cat.toLowerCase()] ?? '📌';
+    const label = cat.charAt(0).toUpperCase() + cat.slice(1);
+    const ruleList = rules[cat]
+      .map((r, idx) => `**${idx + 1}.** ${r}`)
+      .join('\n');
+
+    return new EmbedBuilder()
+      .setTitle(`${emoji}  ${label} Rules`)
+      .setDescription(ruleList)
+      .setColor(CATEGORY_COLORS[i % CATEGORY_COLORS.length])
+      .setFooter({ text: 'Break the rules and face the consequences.' });
+  });
+}
+
+async function postRulesToChannel(guild) {
+  const channelId = getRulesChannel(guild.id);
+  if (!channelId) return false;
+  const ch = guild.channels.cache.get(channelId);
+  if (!ch) return false;
+
+  const rules = getRules(guild.id);
+  const embeds = buildRulesEmbeds(rules);
+  if (!embeds) return false;
+
+  // Delete previous bot messages in the rules channel then repost fresh
+  try {
+    const messages = await ch.messages.fetch({ limit: 50 });
+    const botMessages = messages.filter(m => m.author.id === guild.client.user.id);
+    for (const msg of botMessages.values()) await msg.delete().catch(() => {});
+  } catch {}
+
+  // Post header then one embed per category
+  const header = new EmbedBuilder()
+    .setTitle('📜  Server Rules')
+    .setDescription('Read and follow the rules below. Ignorance is not an excuse.')
+    .setColor(0x8B0000)
+    .setTimestamp();
+
+  await ch.send({ embeds: [header] });
+  for (const embed of embeds) {
+    await ch.send({ embeds: [embed] });
+  }
+  return true;
+}
+
+// ─── Join Info Embed Builder ──────────────────────────────────────────────────
+
+function buildJoinEmbed(info) {
+  const embed = new EmbedBuilder()
+    .setTitle('🎮 How to Join the Server')
+    .setColor(0x8B0000)
+    .setDescription('Follow the steps below to find and join our DayZ server on Xbox.')
+    .addFields(
+      { name: '1️⃣  Open DayZ', value: 'Launch DayZ on your Xbox and go to **Community Servers**.' },
+      { name: '2️⃣  Search the server', value: `Search for:\n\`\`\`${info.name}\`\`\`` },
+      { name: '3️⃣  Host Gamertag', value: `Follow the host to find the server:\n**${info.gamertag}**` },
+    )
+    .setTimestamp();
+
+  if (info.password) {
+    embed.addFields({ name: '🔒 Password', value: `\`${info.password}\`` });
+  }
+  if (info.extra) {
+    embed.addFields({ name: '📝 Extra Info', value: info.extra });
+  }
+
+  embed.setFooter({ text: 'Still struggling? Ask a member for help!' });
+  return embed;
+}
+
+// ─── Keyword Auto-Responder ───────────────────────────────────────────────────
+
+client.on('messageCreate', async message => {
+  if (message.author.bot) return;
+  if (!message.guild)     return;
+
+  const info = getServerInfo(message.guild.id);
+  if (!info) return; // server info not configured yet
+
+  const content = message.content.toLowerCase();
+  const triggered = JOIN_KEYWORDS.some(kw => content.includes(kw));
+  if (!triggered) return;
+
+  await message.reply({ embeds: [buildJoinEmbed(info)] });
 });
 
 client.login(TOKEN);
