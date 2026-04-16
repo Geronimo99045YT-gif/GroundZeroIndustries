@@ -178,9 +178,12 @@ async function runSchedule(schedule) {
 
   const msg = schedule.message;
 
-  // If it's a bot command (starts with /) send it as a message so other bots pick it up
-  // For slash commands we send as plain text — other bots reading the channel will see it
-  await channel.send(msg).catch(() => {});
+  // Discord bots CANNOT trigger slash commands (/) on other bots — Discord blocks this by design.
+  // Only prefix commands (!, ?, $, etc.) work for bot-to-bot communication.
+  // e.g. use !restart instead of /restart when scheduling commands for other bots.
+  await channel.send(msg).catch(err => {
+    console.error(`Schedule #${schedule.id} failed to send: ${err.message}`);
+  });
 
   // Update last_run_at
   await sbRequest('POST', '/rest/v1/schedules', { ...schedule, last_run_at: new Date().toISOString() });
@@ -1018,7 +1021,7 @@ const commands = [
     .setName('schedule')
     .setDescription('Schedule a message or bot command')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(o => o.setName('message').setDescription('Message or bot command to send (e.g. /restart)').setRequired(true))
+    .addStringOption(o => o.setName('message').setDescription('Message or bot prefix command (e.g. !restart) — slash commands won\'t work').setRequired(true))
     .addChannelOption(o => o.setName('channel').setDescription('Channel to send it in').addChannelTypes(ChannelType.GuildText).setRequired(true))
     .addStringOption(o => o.setName('type').setDescription('Schedule type').setRequired(true).addChoices(
       { name: 'Once — specific date/time', value: 'once' },
@@ -1280,7 +1283,7 @@ client.on('interactionCreate', async interaction => {
 
     let row = {
       guild_id: guild.id, channel_id: channel.id, message,
-      is_bot_command: message.startsWith('/'),
+      is_bot_command: !message.startsWith('/') && /^[!?$\\.~]/.test(message),
       created_by: user.id, enabled: true,
     };
 
@@ -1329,7 +1332,7 @@ client.on('interactionCreate', async interaction => {
             { name: '📢 Message',  value: `\`${message}\``,       inline: false },
             { name: '📍 Channel',  value: `${channel}`,            inline: true },
             { name: '⏰ Timing',   value: typeLabels[type],         inline: true },
-            { name: '🤖 Bot Command', value: message.startsWith('/') ? 'Yes' : 'No', inline: true },
+            { name: '🤖 Bot Command', value: /^[!?$\\.~]/.test(message) ? 'Yes (prefix command)' : 'No', inline: true },
           )
           .setFooter({ text: 'Use /schedules to view all  •  /unschedule [id] to delete' })
           .setTimestamp(),
@@ -2205,36 +2208,39 @@ function isFromBeefingUser(authorId, state) {
 
 // ─── Trash Talk Comeback Pool (fallback if Groq is down) ─────────────────────
 const COMEBACK_POOL = [
-  "say less 💀",
-  "nah 😂",
-  "who asked 💀",
-  "log off mate 😭",
-  "L + ratio 💀",
-  "try again 😂",
-  "nobody cares 💀",
-  "cry about it 😭",
-  "embarrassing 💀",
-  "not even close 😂",
-  "sit down 💀",
-  "delete your account 😭",
-  "you lost already 💀",
-  "couldn't be me 😂",
-  "next 💀",
-  "that all you got? 😂",
-  "imagine 💀",
-  "wrong one mate 😭",
-  "you're cooked 💀",
-  "mad 😂",
-  "stay losing 💀",
-  "not you 😭",
-  "yawn 💀",
-  "skill issue 😂",
-  "go outside 💀",
-  "you wish 😭",
-  "touch grass 💀",
-  "lmaooo 😂",
-  "nah you're actually cooked 💀",
-  "done 😭",
+  // Sharp and clean
+  "Genuinely cannot tell if you're trolling or just built different in a bad way 💀",
+  "The confidence to type that with no sense of self-awareness is honestly impressive",
+  "I've seen better arguments from people who were half asleep 😴",
+  "You fight like someone who's never actually won anything in their life",
+  "Bro woke up today and chose to be the worst version of himself 💀",
+  "That's the kind of take that ends friendships and starts support groups",
+  "You're not even wrong in an interesting way, you're just wrong 😂",
+  "I genuinely feel secondhand embarrassment reading that",
+  "The bar was on the floor and you still managed to trip over it",
+  "You're giving everything and delivering nothing, impressive really 💀",
+  // Witty
+  "Bold strategy, let's see if it pays off — spoiler: it won't",
+  "I'd explain why you're wrong but I don't think we have that kind of time",
+  "There are two types of people in this server and then there's you",
+  "You've got the energy of someone who argues with automated phone systems 💀",
+  "That response had the nutritional value of a wet napkin",
+  "You're the type to lose an argument and then go quiet for a week 😂",
+  "I'm not even mad, I'm just a bit concerned for you if I'm honest",
+  "Whatever they were selling when they made you, they clearly ran out midway through",
+  "I've seen more self-awareness from a brick wall",
+  "You came in swinging and somehow hit yourself 💀",
+  // Clean but devastating
+  "Bro really thought that was a good idea 😭",
+  "You need better material, this is just sad",
+  "Not the clap back I was expecting but definitely the one you deserve 😂",
+  "Come back when you've got something worth responding to",
+  "You're not the villain of this story, you're barely even a side character",
+  "I'd say get well soon but this seems permanent 💀",
+  "The way you type tells me everything I need to know about you",
+  "Mate that argument was DOA before you even finished typing it",
+  "You've got the conviction of someone who's never been right about anything 😭",
+  "Log off, regroup, maybe take a walk. Come back better than this 💀",
 ];
 
 // Separate pool for defending protected users — extra aggressive
@@ -2331,7 +2337,7 @@ async function generateComebackAI(insultText, priorExchanges) {
 
   const prompt = `${context}Someone just said this to you (a DayZ server bot called GroundZeroAI): "${insultText}"
 
-You are GroundZeroAI — an unhinged Discord bot that always wins. Match the energy — mild gets a slick reply, aggressive gets something wild and creative. Absurd comparisons, bizarre threats, unexpected angles. No slurs or the c-word. Under 10 words. One emoji max. Always win.`;
+You are GroundZeroAI, a sharp-tongued Discord bot. Match the energy of the message — calm gets a slick witty reply, aggressive gets a devastating clap back. Sound intelligent and confident, not childish. Keep it 1-2 sentences max. No slurs or the c-word. One emoji max at the end if it fits. Always win.`;
 
   return new Promise((resolve) => {
     const body = JSON.stringify({
@@ -2340,7 +2346,7 @@ You are GroundZeroAI — an unhinged Discord bot that always wins. Match the ene
       messages: [
         {
           role: 'system',
-          content: 'You are GroundZeroAI, an unhinged Discord bot. Be creative and absurd — wild comparisons, bizarre threats, unexpected roasts. No slurs or the c-word but everything else is fair game. Under 2 sentences. One emoji max. Never apologise. Destroy them.',
+          content: 'You are GroundZeroAI, a sharp-tongued Discord bot. Be witty, cutting and intelligent. Match the energy — escalate if they escalate. Sound like someone genuinely quick, not someone spam typing random insults. 1-2 sentences max. No slurs or the c-word. One emoji max at the end if it fits. Never apologise.',
         },
         { role: 'user', content: prompt },
       ],
@@ -2533,7 +2539,7 @@ client.on('messageCreate', async message => {
       try { await message.channel.sendTyping(); } catch {}
       let comeback;
       if (GROQ_API_KEY) {
-        const prompt = `You are GroundZeroAI, a savage unhinged Discord bot. Roast <@${targetUser.id}> (${targetUser.username}) in one sentence under 10 words. Be creative and absurd. No slurs or the c-word. One emoji max.`;
+        const prompt = `You are GroundZeroAI, a sharp-tongued Discord bot. Roast <@${targetUser.id}> (${targetUser.username}) in one sharp, witty sentence. Sound intelligent not childish. No slurs or the c-word. One emoji max at the end if it fits.`;
         comeback = await generateComebackAI(prompt, []);
       } else {
         comeback = getFallbackComeback([]);
