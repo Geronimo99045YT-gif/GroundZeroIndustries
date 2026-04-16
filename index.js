@@ -109,8 +109,20 @@ async function setTrashTalk(guildId, v) { await saveGuildConfig(guildId, { trash
 async function getRulesChannel(guildId) { return (await getGuildConfig(guildId)).rules_channel_id ?? null; }
 async function setRulesChannel(guildId, v) { await saveGuildConfig(guildId, { rules_channel_id: v }); }
 
-async function getTargetRole(guildId) { return (await getGuildConfig(guildId)).target_role_id ?? null; }
+async function getTargetRole(guildId)    { return (await getGuildConfig(guildId)).target_role_id     ?? null; }
 async function setTargetRole(guildId, v) { await saveGuildConfig(guildId, { target_role_id: v }); }
+
+async function getWelcomeChannel(guildId)    { return (await getGuildConfig(guildId)).welcome_channel_id ?? null; }
+async function setWelcomeChannel(guildId, v) { await saveGuildConfig(guildId, { welcome_channel_id: v }); }
+
+async function getWelcomeMessage(guildId)    { return (await getGuildConfig(guildId)).welcome_message ?? null; }
+async function setWelcomeMessage(guildId, v) { await saveGuildConfig(guildId, { welcome_message: v }); }
+
+async function getAutoRole(guildId)    { return (await getGuildConfig(guildId)).auto_role_id ?? null; }
+async function setAutoRole(guildId, v) { await saveGuildConfig(guildId, { auto_role_id: v }); }
+
+async function getReportsChannel(guildId)    { return (await getGuildConfig(guildId)).reports_channel_id ?? null; }
+async function setReportsChannel(guildId, v) { await saveGuildConfig(guildId, { reports_channel_id: v }); }
 
 async function getRules(guildId) {
   return (await sbGetRules(guildId)) ?? mem(guildId).rules;
@@ -145,6 +157,204 @@ async function removeRule(guildId, category, index) {
   if (rules.length === 0) delete mem(guildId).rules[cat];
   return true;
 }
+
+// ─── Message Scheduler Engine ────────────────────────────────────────────────
+
+const DAY_NAMES = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+
+async function getSchedules(guildId) {
+  const path = guildId
+    ? `/rest/v1/schedules?guild_id=eq.${guildId}&enabled=eq.true&order=id`
+    : `/rest/v1/schedules?enabled=eq.true`;
+  const rows = await sbRequest('GET', path);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function runSchedule(schedule) {
+  const guild   = client.guilds.cache.get(schedule.guild_id);
+  if (!guild) return;
+  const channel = guild.channels.cache.get(schedule.channel_id);
+  if (!channel) return;
+
+  const msg = schedule.message;
+
+  // If it's a bot command (starts with /) send it as a message so other bots pick it up
+  // For slash commands we send as plain text — other bots reading the channel will see it
+  await channel.send(msg).catch(() => {});
+
+  // Update last_run_at
+  await sbRequest('POST', '/rest/v1/schedules', { ...schedule, last_run_at: new Date().toISOString() });
+}
+
+function shouldRunNow(schedule) {
+  const now     = new Date();
+  const lastRun = schedule.last_run_at ? new Date(schedule.last_run_at) : null;
+  const type    = schedule.interval_type;
+
+  if (!schedule.recurring) {
+    // One-off: run if run_once_at has passed and never run
+    if (!schedule.run_once_at || lastRun) return false;
+    return new Date(schedule.run_once_at) <= now;
+  }
+
+  if (type === 'minutes') {
+    const ms = (schedule.interval_value ?? 30) * 60 * 1000;
+    return !lastRun || (now - lastRun) >= ms;
+  }
+
+  if (type === 'hours') {
+    const ms = (schedule.interval_value ?? 1) * 60 * 60 * 1000;
+    return !lastRun || (now - lastRun) >= ms;
+  }
+
+  if (type === 'daily' || type === 'weekly') {
+    const [hh, mm] = (schedule.run_at_time ?? '12:00').split(':').map(Number);
+    const targetMin = hh * 60 + mm;
+    const nowMin    = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+    // Only fire within a 1-minute window of the target time
+    if (Math.abs(nowMin - targetMin) > 1) return false;
+
+    if (type === 'weekly') {
+      const targetDay = schedule.interval_value ?? 0; // 0=Sun
+      if (now.getUTCDay() !== targetDay) return false;
+    }
+
+    // Don't fire twice in the same minute
+    if (lastRun) {
+      const diffMins = (now - lastRun) / 60000;
+      if (diffMins < 2) return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+async function checkSchedules() {
+  if (!SUPABASE_URL || !client.isReady()) return;
+  try {
+    const schedules = await getSchedules(null); // all guilds
+    for (const s of schedules) {
+      if (shouldRunNow(s)) {
+        await runSchedule(s);
+        // Disable one-off after running
+        if (!s.recurring) {
+          await sbRequest('POST', '/rest/v1/schedules', { ...s, enabled: false, last_run_at: new Date().toISOString() });
+        }
+      }
+    }
+  } catch {}
+}
+
+// Check every 60 seconds
+setInterval(checkSchedules, 60 * 1000);
+
+// ─── Giveaway Engine ─────────────────────────────────────────────────────────
+
+const GIVEAWAY_EMOJI = '🎉';
+
+async function createGiveaway(guildId, channelId, prize, durationMins, winnerCount, hostId) {
+  const endsAt = new Date(Date.now() + durationMins * 60 * 1000).toISOString();
+  const row = { guild_id: guildId, channel_id: channelId, prize, winner_count: winnerCount, ends_at: endsAt, host_id: hostId, ended: false };
+  // Insert and get back the id
+  return new Promise((resolve) => {
+    const body = JSON.stringify(row);
+    const req = https.request({
+      hostname: new URL(SUPABASE_URL).hostname,
+      path: '/rest/v1/giveaways',
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json', 'Prefer': 'return=representation',
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { const rows = JSON.parse(data); resolve(rows[0] ?? null); }
+        catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.write(body);
+    req.end();
+  });
+}
+
+async function getActiveGiveaways() {
+  const rows = await sbRequest('GET', `/rest/v1/giveaways?ended=eq.false&select=*`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function getGiveawayEntries(giveawayId) {
+  const rows = await sbRequest('GET', `/rest/v1/giveaway_entries?giveaway_id=eq.${giveawayId}&select=user_id`);
+  return Array.isArray(rows) ? rows.map(r => r.user_id) : [];
+}
+
+async function endGiveaway(giveawayId, guild) {
+  if (!SUPABASE_URL) return;
+  const rows = await sbRequest('GET', `/rest/v1/giveaways?id=eq.${giveawayId}&limit=1`);
+  const gw = Array.isArray(rows) ? rows[0] : null;
+  if (!gw || gw.ended) return;
+
+  // Mark as ended
+  await sbRequest('POST', '/rest/v1/giveaways', { ...gw, ended: true });
+
+  const entries = await getGiveawayEntries(giveawayId);
+  const channel = guild.channels.cache.get(gw.channel_id);
+  if (!channel) return;
+
+  let msg;
+  try { msg = await channel.messages.fetch(gw.message_id); } catch {}
+
+  if (entries.length === 0) {
+    const noEntry = new EmbedBuilder()
+      .setTitle('🎉  Giveaway Ended')
+      .setColor(0x8B0000)
+      .setDescription(`**${gw.prize}**
+
+No one entered — no winner this time!`)
+      .setFooter({ text: 'GroundZeroAI Giveaways' })
+      .setTimestamp();
+    if (msg) msg.edit({ embeds: [noEntry], components: [] });
+    channel.send({ embeds: [noEntry] });
+    return;
+  }
+
+  // Pick winners
+  const shuffled = entries.sort(() => Math.random() - 0.5);
+  const winners = shuffled.slice(0, Math.min(gw.winner_count, shuffled.length));
+  const winnerMentions = winners.map(id => `<@${id}>`).join(', ');
+
+  const endEmbed = new EmbedBuilder()
+    .setTitle('🎉  Giveaway Ended!')
+    .setColor(0x57F287)
+    .setDescription(`**Prize:** ${gw.prize}
+
+🏆 **Winner${winners.length > 1 ? 's' : ''}:** ${winnerMentions}`)
+    .addFields({ name: 'Entries', value: `${entries.length}`, inline: true })
+    .setFooter({ text: `Hosted by user ${gw.host_id}  •  GroundZeroAI` })
+    .setTimestamp();
+
+  if (msg) msg.edit({ embeds: [endEmbed], components: [] });
+  channel.send({ content: `🎉 Congrats ${winnerMentions}! You won **${gw.prize}**!`, embeds: [endEmbed] });
+}
+
+// Check for expired giveaways every 30 seconds
+async function checkGiveaways() {
+  if (!SUPABASE_URL || !client.isReady()) return;
+  try {
+    const now = new Date().toISOString();
+    const rows = await sbRequest('GET', `/rest/v1/giveaways?ended=eq.false&ends_at=lt.${now}`);
+    if (!Array.isArray(rows)) return;
+    for (const gw of rows) {
+      const guild = client.guilds.cache.get(gw.guild_id);
+      if (guild) await endGiveaway(gw.id, guild);
+    }
+  } catch {}
+}
+setInterval(checkGiveaways, 30 * 1000);
 
 // ─── Ground Zero POI Data ────────────────────────────────────────────────────
 
@@ -732,6 +942,105 @@ const commands = [
     .setName('ping')
     .setDescription('Check bot latency'),
 
+  // ── Welcome ──────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName('setwelcomechannel')
+    .setDescription('Set the channel for welcome messages')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addChannelOption(o => o.setName('channel').setDescription('Welcome channel').addChannelTypes(ChannelType.GuildText).setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('setwelcomemessage')
+    .setDescription('Set the welcome message (use {user} for mention, {server} for server name)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('message').setDescription('Welcome message text').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('setautorole')
+    .setDescription('Set the role auto-assigned to new members')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addRoleOption(o => o.setName('role').setDescription('Role to assign').setRequired(true)),
+
+  // ── Reports ───────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName('setreportschannel')
+    .setDescription('Set the channel for player reports')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addChannelOption(o => o.setName('channel').setDescription('Reports channel').addChannelTypes(ChannelType.GuildText).setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('report')
+    .setDescription('Report a player to the mods')
+    .addUserOption(o => o.setName('user').setDescription('Player to report').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for report').setRequired(true))
+    .addStringOption(o => o.setName('evidence').setDescription('Evidence (screenshot URL, description etc.)')),
+
+  // ── Polls ─────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName('poll')
+    .setDescription('Create a poll')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .addStringOption(o => o.setName('question').setDescription('Poll question').setRequired(true))
+    .addStringOption(o => o.setName('options').setDescription('Options separated by | (e.g. Yes|No|Maybe) — leave blank for Yes/No').setRequired(false)),
+
+  // ── Announcements ─────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName('announce')
+    .setDescription('Post a server announcement embed')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('title').setDescription('Announcement title').setRequired(true))
+    .addStringOption(o => o.setName('message').setDescription('Announcement body').setRequired(true))
+    .addChannelOption(o => o.setName('channel').setDescription('Channel to post in (defaults to current)').addChannelTypes(ChannelType.GuildText)),
+
+  // ── Giveaways ─────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName('giveaway')
+    .setDescription('Start a giveaway')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('prize').setDescription('What are you giving away?').setRequired(true))
+    .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes').setRequired(true).setMinValue(1))
+    .addIntegerOption(o => o.setName('winners').setDescription('Number of winners (default 1)').setMinValue(1).setMaxValue(10)),
+
+  new SlashCommandBuilder()
+    .setName('gend')
+    .setDescription('End a giveaway early')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('message_id').setDescription('Message ID of the giveaway').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('greroll')
+    .setDescription('Reroll giveaway winners')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('message_id').setDescription('Message ID of the giveaway').setRequired(true)),
+
+  // ── Scheduler ────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName('schedule')
+    .setDescription('Schedule a message or bot command')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(o => o.setName('message').setDescription('Message or bot command to send (e.g. /restart)').setRequired(true))
+    .addChannelOption(o => o.setName('channel').setDescription('Channel to send it in').addChannelTypes(ChannelType.GuildText).setRequired(true))
+    .addStringOption(o => o.setName('type').setDescription('Schedule type').setRequired(true).addChoices(
+      { name: 'Once — specific date/time', value: 'once' },
+      { name: 'Every X minutes',           value: 'minutes' },
+      { name: 'Every X hours',             value: 'hours' },
+      { name: 'Daily at a set time',       value: 'daily' },
+      { name: 'Weekly on a set day',       value: 'weekly' },
+    ))
+    .addStringOption(o => o.setName('time').setDescription('For once: YYYY-MM-DD HH:MM | For daily/weekly: HH:MM (UTC) | For interval: number').setRequired(true))
+    .addStringOption(o => o.setName('day').setDescription('For weekly only: Monday/Tuesday etc.')),
+
+  new SlashCommandBuilder()
+    .setName('schedules')
+    .setDescription('List all active schedules')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('unschedule')
+    .setDescription('Delete a schedule by ID')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addIntegerOption(o => o.setName('id').setDescription('Schedule ID from /schedules').setRequired(true)),
+
   new SlashCommandBuilder()
     .setName('poi')
     .setDescription('Show all Ground Zero POIs on Livonia with coordinates'),
@@ -804,8 +1113,9 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
   ],
-  partials: [Partials.GuildMember],
+  partials: [Partials.GuildMember, Partials.Message, Partials.Reaction],
 });
 
 client.once('ready', async () => {
@@ -957,6 +1267,281 @@ client.on('interactionCreate', async interaction => {
           .setTimestamp(),
       ],
     });
+
+  // /schedule
+  } else if (commandName === 'schedule') {
+    if (!SUPABASE_URL) { await interaction.reply({ content: 'Scheduler requires Supabase.', ephemeral: true }); return; }
+
+    const message   = interaction.options.getString('message');
+    const channel   = interaction.options.getChannel('channel');
+    const type      = interaction.options.getString('type');
+    const timeInput = interaction.options.getString('time');
+    const dayInput  = interaction.options.getString('day')?.toLowerCase();
+
+    let row = {
+      guild_id: guild.id, channel_id: channel.id, message,
+      is_bot_command: message.startsWith('/'),
+      created_by: user.id, enabled: true,
+    };
+
+    if (type === 'once') {
+      const dt = new Date(timeInput);
+      if (isNaN(dt)) { await interaction.reply({ content: 'Invalid date. Use format: `YYYY-MM-DD HH:MM`', ephemeral: true }); return; }
+      row.recurring = false;
+      row.run_once_at = dt.toISOString();
+    } else if (type === 'minutes' || type === 'hours') {
+      const val = parseInt(timeInput);
+      if (isNaN(val) || val < 1) { await interaction.reply({ content: 'Provide a number for the interval.', ephemeral: true }); return; }
+      row.recurring = true;
+      row.interval_type = type;
+      row.interval_value = val;
+    } else if (type === 'daily') {
+      if (!/^\d{1,2}:\d{2}$/.test(timeInput)) { await interaction.reply({ content: 'Use HH:MM format for daily time (UTC).', ephemeral: true }); return; }
+      row.recurring = true;
+      row.interval_type = 'daily';
+      row.run_at_time = timeInput;
+    } else if (type === 'weekly') {
+      if (!/^\d{1,2}:\d{2}$/.test(timeInput)) { await interaction.reply({ content: 'Use HH:MM format for weekly time (UTC).', ephemeral: true }); return; }
+      const dayNum = DAY_NAMES.indexOf(dayInput ?? '');
+      if (dayNum === -1) { await interaction.reply({ content: 'Provide a valid day name (e.g. Monday).', ephemeral: true }); return; }
+      row.recurring = true;
+      row.interval_type = 'weekly';
+      row.interval_value = dayNum;
+      row.run_at_time = timeInput;
+    }
+
+    const result = await sbRequest('POST', '/rest/v1/schedules', row);
+
+    const typeLabels = {
+      once: `Once at ${timeInput} UTC`,
+      minutes: `Every ${timeInput} minutes`,
+      hours: `Every ${timeInput} hours`,
+      daily: `Daily at ${timeInput} UTC`,
+      weekly: `Every ${dayInput?.charAt(0).toUpperCase() + dayInput?.slice(1)} at ${timeInput} UTC`,
+    };
+
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('✅  Schedule Created')
+          .setColor(0x57F287)
+          .addFields(
+            { name: '📢 Message',  value: `\`${message}\``,       inline: false },
+            { name: '📍 Channel',  value: `${channel}`,            inline: true },
+            { name: '⏰ Timing',   value: typeLabels[type],         inline: true },
+            { name: '🤖 Bot Command', value: message.startsWith('/') ? 'Yes' : 'No', inline: true },
+          )
+          .setFooter({ text: 'Use /schedules to view all  •  /unschedule [id] to delete' })
+          .setTimestamp(),
+      ],
+      ephemeral: true,
+    });
+
+  // /schedules
+  } else if (commandName === 'schedules') {
+    if (!SUPABASE_URL) { await interaction.reply({ content: 'Scheduler requires Supabase.', ephemeral: true }); return; }
+    await interaction.deferReply({ ephemeral: true });
+    const list = await getSchedules(guild.id);
+    if (list.length === 0) {
+      await interaction.editReply({ content: 'No active schedules. Use `/schedule` to create one.' });
+      return;
+    }
+    const lines = list.map(s => {
+      let timing = '';
+      if (!s.recurring) timing = `Once at ${s.run_once_at ? new Date(s.run_once_at).toUTCString() : '?'}`;
+      else if (s.interval_type === 'minutes') timing = `Every ${s.interval_value}min`;
+      else if (s.interval_type === 'hours')   timing = `Every ${s.interval_value}h`;
+      else if (s.interval_type === 'daily')   timing = `Daily at ${s.run_at_time} UTC`;
+      else if (s.interval_type === 'weekly')  timing = `Weekly ${DAY_NAMES[s.interval_value ?? 0]} at ${s.run_at_time} UTC`;
+      return `**#${s.id}** — \`${s.message.slice(0, 40)}\`\n📍 <#${s.channel_id}> · ⏰ ${timing}`;
+    }).join('\n\n');
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle(`🗓️  Active Schedules (${list.length})`)
+          .setDescription(lines)
+          .setColor(0x5865F2)
+          .setFooter({ text: 'Use /unschedule [id] to delete' })
+          .setTimestamp(),
+      ],
+    });
+
+  // /unschedule
+  } else if (commandName === 'unschedule') {
+    if (!SUPABASE_URL) { await interaction.reply({ content: 'Scheduler requires Supabase.', ephemeral: true }); return; }
+    const id = interaction.options.getInteger('id');
+    await sbRequest('DELETE', `/rest/v1/schedules?id=eq.${id}&guild_id=eq.${guild.id}`);
+    await interaction.reply({
+      embeds: [new EmbedBuilder().setTitle('🗑️  Schedule Deleted').setColor(0xE67E22).setDescription(`Schedule **#${id}** has been removed.`).setTimestamp()],
+      ephemeral: true,
+    });
+
+  // /setwelcomechannel
+  } else if (commandName === 'setwelcomechannel') {
+    const channel = interaction.options.getChannel('channel');
+    await setWelcomeChannel(guild.id, channel.id);
+    await interaction.reply({ embeds: [new EmbedBuilder().setTitle('✅  Welcome Channel Set').setColor(0x57F287).setDescription(`Welcome messages will be posted to ${channel}.`).setTimestamp()], ephemeral: true });
+
+  // /setwelcomemessage
+  } else if (commandName === 'setwelcomemessage') {
+    const msg = interaction.options.getString('message');
+    await setWelcomeMessage(guild.id, msg);
+    await interaction.reply({ embeds: [new EmbedBuilder().setTitle('✅  Welcome Message Set').setColor(0x57F287).setDescription(`**Preview:**
+${msg.replace('{user}', `<@${user.id}>`).replace('{server}', guild.name)}`).setFooter({ text: 'Use {user} for mention, {server} for server name' }).setTimestamp()], ephemeral: true });
+
+  // /setautorole
+  } else if (commandName === 'setautorole') {
+    const role = interaction.options.getRole('role');
+    await setAutoRole(guild.id, role.id);
+    await interaction.reply({ embeds: [new EmbedBuilder().setTitle('✅  Auto-Role Set').setColor(0x57F287).setDescription(`New members will automatically receive <@&${role.id}>.`).setFooter({ text: 'Saved to database' }).setTimestamp()], ephemeral: true });
+
+  // /setreportschannel
+  } else if (commandName === 'setreportschannel') {
+    const channel = interaction.options.getChannel('channel');
+    await setReportsChannel(guild.id, channel.id);
+    await interaction.reply({ embeds: [new EmbedBuilder().setTitle('✅  Reports Channel Set').setColor(0x57F287).setDescription(`Player reports will be sent to ${channel}.`).setTimestamp()], ephemeral: true });
+
+  // /report
+  } else if (commandName === 'report') {
+    const reported = interaction.options.getUser('user');
+    const reason   = interaction.options.getString('reason');
+    const evidence = interaction.options.getString('evidence') ?? null;
+
+    const channelId = await getReportsChannel(guild.id);
+    if (!channelId) {
+      await interaction.reply({ content: 'No reports channel has been set up yet. Ask an admin to run `/setreportschannel`.', ephemeral: true });
+      return;
+    }
+    const reportChannel = guild.channels.cache.get(channelId);
+    if (!reportChannel) {
+      await interaction.reply({ content: 'Reports channel not found. Ask an admin to re-run `/setreportschannel`.', ephemeral: true });
+      return;
+    }
+
+    // Save to DB
+    if (SUPABASE_URL) {
+      await sbRequest('POST', '/rest/v1/player_reports', {
+        guild_id: guild.id, reporter_id: user.id, reported_id: reported.id, reason, evidence: evidence ?? null,
+      });
+    }
+
+    const reportEmbed = new EmbedBuilder()
+      .setTitle('🚨  Player Report')
+      .setColor(0xED4245)
+      .setThumbnail(reported.displayAvatarURL())
+      .addFields(
+        { name: '👤 Reported',  value: `<@${reported.id}>
+\`${reported.tag}\``, inline: true },
+        { name: '📢 Reporter',  value: `<@${user.id}>
+\`${user.tag}\``,         inline: true },
+        { name: '📝 Reason',    value: reason },
+      )
+      .setFooter({ text: `GroundZeroAI  •  Report System` })
+      .setTimestamp();
+
+    if (evidence) reportEmbed.addFields({ name: '🔗 Evidence', value: evidence });
+
+    await reportChannel.send({ embeds: [reportEmbed] });
+    await interaction.reply({ embeds: [new EmbedBuilder().setTitle('✅  Report Submitted').setColor(0x57F287).setDescription('Your report has been sent to the mod team. Thank you.').setTimestamp()], ephemeral: true });
+
+  // /poll
+  } else if (commandName === 'poll') {
+    const question = interaction.options.getString('question');
+    const optStr   = interaction.options.getString('options');
+    const options  = optStr ? optStr.split('|').map(o => o.trim()).filter(Boolean).slice(0, 10) : ['Yes', 'No'];
+
+    const numberEmojis = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+    const optionLines  = options.map((o, i) => `${numberEmojis[i]}  ${o}`).join('\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📊  Poll`)
+      .setDescription(`**${question}**\n\n${optionLines}`)
+      .setColor(0x5865F2)
+      .setFooter({ text: `Poll by ${user.tag}  •  React to vote` })
+      .setTimestamp();
+
+    const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+    for (let i = 0; i < options.length; i++) {
+      await msg.react(numberEmojis[i]).catch(() => {});
+    }
+
+  // /announce
+  } else if (commandName === 'announce') {
+    const title   = interaction.options.getString('title');
+    const message = interaction.options.getString('message');
+    const target  = interaction.options.getChannel('channel') ?? interaction.channel;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📣  ${title}`)
+      .setDescription(message)
+      .setColor(0x8B0000)
+      .setFooter({ text: `Ground Zero  •  ${guild.name}` })
+      .setTimestamp();
+
+    await target.send({ content: '@here', embeds: [embed] });
+    await interaction.reply({ content: `✅ Announcement posted to ${target}.`, ephemeral: true });
+
+  // /giveaway
+  } else if (commandName === 'giveaway') {
+    if (!SUPABASE_URL) {
+      await interaction.reply({ content: 'Giveaways require Supabase to be configured.', ephemeral: true });
+      return;
+    }
+    const prize       = interaction.options.getString('prize');
+    const duration    = interaction.options.getInteger('duration');
+    const winnerCount = interaction.options.getInteger('winners') ?? 1;
+
+    await interaction.deferReply();
+
+    const endsAt    = new Date(Date.now() + duration * 60 * 1000);
+    const timestamp = Math.floor(endsAt.getTime() / 1000);
+
+    const embed = new EmbedBuilder()
+      .setTitle(`🎉  GIVEAWAY`)
+      .setColor(0xFFD700)
+      .setDescription(`**${prize}**
+
+React with 🎉 to enter!`)
+      .addFields(
+        { name: '⏰ Ends',     value: `<t:${timestamp}:R>`,  inline: true },
+        { name: '🏆 Winners', value: `${winnerCount}`,        inline: true },
+        { name: '🎟️ Hosted by', value: `<@${user.id}>`,      inline: true },
+      )
+      .setFooter({ text: 'GroundZeroAI Giveaways  •  React 🎉 to enter' })
+      .setTimestamp(endsAt);
+
+    const msg = await interaction.editReply({ embeds: [embed] });
+    await msg.react('🎉').catch(() => {});
+
+    // Save to DB
+    const gw = await createGiveaway(guild.id, interaction.channel.id, prize, duration, winnerCount, user.id);
+    if (gw) {
+      await sbRequest('POST', '/rest/v1/giveaways', { ...gw, message_id: msg.id });
+    }
+
+  // /gend
+  } else if (commandName === 'gend') {
+    const msgId = interaction.options.getString('message_id');
+    const rows  = await sbRequest('GET', `/rest/v1/giveaways?message_id=eq.${msgId}&guild_id=eq.${guild.id}&limit=1`);
+    const gw    = Array.isArray(rows) ? rows[0] : null;
+    if (!gw) { await interaction.reply({ content: 'Giveaway not found.', ephemeral: true }); return; }
+    await interaction.deferReply({ ephemeral: true });
+    await endGiveaway(gw.id, guild);
+    await interaction.editReply({ content: '✅ Giveaway ended.' });
+
+  // /greroll
+  } else if (commandName === 'greroll') {
+    const msgId   = interaction.options.getString('message_id');
+    const rows    = await sbRequest('GET', `/rest/v1/giveaways?message_id=eq.${msgId}&guild_id=eq.${guild.id}&limit=1`);
+    const gw      = Array.isArray(rows) ? rows[0] : null;
+    if (!gw) { await interaction.reply({ content: 'Giveaway not found.', ephemeral: true }); return; }
+    const entries = await getGiveawayEntries(gw.id);
+    if (entries.length === 0) { await interaction.reply({ content: 'No entries to reroll.', ephemeral: true }); return; }
+    const shuffled = entries.sort(() => Math.random() - 0.5);
+    const winners  = shuffled.slice(0, Math.min(gw.winner_count, shuffled.length));
+    const mentions = winners.map(id => `<@${id}>`).join(', ');
+    await interaction.reply({ content: `🎉 **Reroll!** New winner${winners.length > 1 ? 's' : ''}: ${mentions}! Congrats on winning **${gw.prize}**!` });
 
   // /poi
   } else if (commandName === 'poi') {
@@ -2042,6 +2627,64 @@ client.on('messageCreate', async message => {
     resetCooldown(state, guildId);
     trashTalkState.set(guildId, state);
   }
+});
+
+// ─── Giveaway Reaction Handler ───────────────────────────────────────────────
+
+client.on('messageReactionAdd', async (reaction, user) => {
+  if (user.bot) return;
+  if (reaction.emoji.name !== '🎉') return;
+  if (!SUPABASE_URL) return;
+
+  // Fetch partial reaction if needed
+  if (reaction.partial) { try { await reaction.fetch(); } catch { return; } }
+
+  const msgId = reaction.message.id;
+  const rows  = await sbRequest('GET', `/rest/v1/giveaways?message_id=eq.${msgId}&ended=eq.false&limit=1`);
+  const gw    = Array.isArray(rows) ? rows[0] : null;
+  if (!gw) return;
+
+  // Register entry (unique constraint handles duplicates)
+  await sbRequest('POST', '/rest/v1/giveaway_entries', { giveaway_id: gw.id, user_id: user.id });
+});
+
+// ─── Welcome & Auto-Role ─────────────────────────────────────────────────────
+
+client.on('guildMemberAdd', async member => {
+  const guildId = member.guild.id;
+
+  // Auto-role
+  const roleId = await getAutoRole(guildId);
+  if (roleId) {
+    const role = member.guild.roles.cache.get(roleId);
+    if (role) member.roles.add(role).catch(() => {});
+  }
+
+  // Welcome message
+  const channelId = await getWelcomeChannel(guildId);
+  if (!channelId) return;
+  const channel = member.guild.channels.cache.get(channelId);
+  if (!channel) return;
+
+  const customMsg = await getWelcomeMessage(guildId);
+  const defaultMsg = `Welcome to **{server}**, {user}! 🪖 Check out the rules and enjoy your stay.`;
+  const msgText = (customMsg || defaultMsg)
+    .replace('{user}', `<@${member.id}>`)
+    .replace('{server}', member.guild.name);
+
+  const embed = new EmbedBuilder()
+    .setTitle(`👋  Welcome to ${member.guild.name}!`)
+    .setDescription(msgText)
+    .setColor(0x8B0000)
+    .setThumbnail(member.user.displayAvatarURL())
+    .addFields(
+      { name: '👤 Member', value: `<@${member.id}>`, inline: true },
+      { name: '🔢 Member #', value: `${member.guild.memberCount}`, inline: true },
+    )
+    .setFooter({ text: 'GroundZeroAI  •  Ground Zero' })
+    .setTimestamp();
+
+  channel.send({ embeds: [embed] }).catch(() => {});
 });
 
 client.login(TOKEN);
