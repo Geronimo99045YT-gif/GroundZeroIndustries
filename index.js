@@ -146,6 +146,25 @@ async function removeRule(guildId, category, index) {
   return true;
 }
 
+// ─── Ground Zero POI Data ────────────────────────────────────────────────────
+
+const GZ_POIS = [
+  { name: 'Trader',              emoji: '🟢', x: 3820.17,  z: 7928.61,  desc: 'Server trader location',                    category: 'Server' },
+  { name: 'Gun Market',          emoji: '🔴', x: 3388.99,  z: 5030.17,  desc: 'Weapons market',                            category: 'Server' },
+  { name: 'Car Depot',           emoji: '🚗', x: 6996.40,  z: 11651.29, desc: 'Vehicle parts and cars',                    category: 'Server' },
+  { name: 'Airfield Bunker',     emoji: '✈️', x: 4066.96,  z: 10345.12, desc: 'Underground bunker near the airfield',      category: 'Bunker' },
+  { name: 'Booster Base',        emoji: '🔵', x: 11437.34, z: 10446.05, desc: 'Booster base — north east',                 category: 'Server' },
+  { name: 'Contaminated Area',   emoji: '☢️', x: 7532.51,  z: 6066.04,  desc: '⚠️ Stay away — highly dangerous zone',     category: 'Danger' },
+  { name: 'Max Bunker',          emoji: '🟠', x: 6416.27,  z: 4990.87,  desc: 'Underground bunker — centre map',           category: 'Bunker' },
+  { name: 'Dambog Bunker',       emoji: '⬛', x: 645.30,   z: 1159.27,  desc: 'Underground bunker — south west',           category: 'Bunker' },
+  { name: 'Sila Factory',        emoji: '🏭', x: 7348.43,  z: 2647.23,  desc: 'Industrial complex — south centre',         category: 'Military' },
+  { name: 'Unknown',             emoji: '❓', x: 11052.64, z: 3774.95,  desc: 'Unknown location — explore at your risk',   category: 'Unknown' },
+];
+
+function izurviveLink(x, z) {
+  return `https://www.izurvive.com/livonia/#c=${Math.round(x)};${Math.round(z)}`;
+}
+
 // ─── Player Stats Engine ─────────────────────────────────────────────────────
 
 // In-memory write buffer — flushes to Supabase every 2 minutes to save API calls
@@ -712,6 +731,10 @@ const commands = [
     .setDescription('Check bot latency'),
 
   new SlashCommandBuilder()
+    .setName('poi')
+    .setDescription('Show all Ground Zero POIs on Livonia with coordinates'),
+
+  new SlashCommandBuilder()
     .setName('stats')
     .setDescription('View a player\'s activity profile')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -931,6 +954,66 @@ client.on('interactionCreate', async interaction => {
           .setDescription('> The rules channel has been refreshed successfully.')
           .setTimestamp(),
       ],
+    });
+
+  // /poi
+  } else if (commandName === 'poi') {
+    await interaction.deferReply();
+
+    // Build category groups
+    const categories = {};
+    for (const poi of GZ_POIS) {
+      if (!categories[poi.category]) categories[poi.category] = [];
+      categories[poi.category].push(poi);
+    }
+
+    const catColors = {
+      'Server':   0x57F287,
+      'Bunker':   0x5865F2,
+      'Military': 0xED4245,
+      'Danger':   0xFF0000,
+      'Unknown':  0x99AAB5,
+    };
+
+    const catEmojis = {
+      'Server':   '🏪',
+      'Bunker':   '🕳️',
+      'Military': '🪖',
+      'Danger':   '☢️',
+      'Unknown':  '❓',
+    };
+
+    // Header embed
+    const headerEmbed = new EmbedBuilder()
+      .setTitle('📍  Ground Zero — Points of Interest')
+      .setDescription('All known POIs on Livonia for the Ground Zero server.\nClick any coordinate link to open it directly in iZurvive.')
+      .setColor(0x8B0000)
+      .setImage('attachment://groundzero_poi_map.png')
+      .setFooter({ text: 'GroundZeroAI  •  Livonia 2026  •  Copyright @Plaindelta & Ground Zero' })
+      .setTimestamp();
+
+    // One embed per category
+    const categoryEmbeds = Object.entries(categories).map(([cat, pois]) => {
+      const lines = pois.map(p => {
+        const link = izurviveLink(p.x, p.z);
+        return `${p.emoji} **${p.name}**\n${p.desc}\n📌 [\`${Math.round(p.x)} / ${Math.round(p.z)}\`](${link})`;
+      }).join('\n\n');
+
+      return new EmbedBuilder()
+        .setTitle(`${catEmojis[cat] ?? '📍'}  ${cat}`)
+        .setDescription(lines)
+        .setColor(catColors[cat] ?? 0x8B0000);
+    });
+
+    // Attach the POI map image
+    const mapAttachment = new AttachmentBuilder(
+      path.join(__dirname, 'groundzero_poi_map.png'),
+      { name: 'groundzero_poi_map.png' }
+    );
+
+    await interaction.editReply({
+      embeds: [headerEmbed, ...categoryEmbeds],
+      files: [mapAttachment],
     });
 
   // /stats
