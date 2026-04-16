@@ -162,7 +162,9 @@ const GZ_POIS = [
 ];
 
 function izurviveLink(x, z) {
-  return `https://www.izurvive.com/livonia/#c=${Math.round(x)};${Math.round(z)}`;
+  // iZurvive accepts raw DayZ coords via #c=X;Z
+  // X = east-west coordinate, Z = north-south coordinate
+  return `https://www.izurvive.com/livonia/#c=${x.toFixed(2)};${z.toFixed(2)}`;
 }
 
 // ─── Player Stats Engine ─────────────────────────────────────────────────────
@@ -989,7 +991,7 @@ client.on('interactionCreate', async interaction => {
       .setDescription('All known POIs on Livonia for the Ground Zero server.\nClick any coordinate link to open it directly in iZurvive.')
       .setColor(0x8B0000)
       .setImage('attachment://groundzero_poi_map.png')
-      .setFooter({ text: 'GroundZeroAI  •  Livonia 2026  •  Copyright @Plaindelta & Ground Zero' })
+      .setFooter({ text: 'GroundZeroAI  •  Ground Zero  •  Livonia 2026' })
       .setTimestamp();
 
     // One embed per category
