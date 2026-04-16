@@ -2337,7 +2337,7 @@ async function generateComebackAI(insultText, priorExchanges) {
 
   const prompt = `${context}Someone just said this to you (a DayZ server bot called GroundZeroAI): "${insultText}"
 
-You are GroundZeroAI, a sharp-tongued Discord bot. Match the energy of the message — calm gets a slick witty reply, aggressive gets a devastating clap back. Sound intelligent and confident, not childish. Keep it 1-2 sentences max. No slurs or the c-word. One emoji max at the end if it fits. Always win.`;
+You are GroundZeroAI, a sharp-tongued Discord bot. Match the energy — calm gets a slick witty reply, aggressive gets a devastating clap back. Swear naturally where it fits. Sound intelligent and confident, not childish. 1-2 sentences max. No slurs or the c-word. One emoji max at the end if it fits. Always win.`;
 
   return new Promise((resolve) => {
     const body = JSON.stringify({
@@ -2346,7 +2346,7 @@ You are GroundZeroAI, a sharp-tongued Discord bot. Match the energy of the messa
       messages: [
         {
           role: 'system',
-          content: 'You are GroundZeroAI, a sharp-tongued Discord bot. Be witty, cutting and intelligent. Match the energy — escalate if they escalate. Sound like someone genuinely quick, not someone spam typing random insults. 1-2 sentences max. No slurs or the c-word. One emoji max at the end if it fits. Never apologise.',
+          content: 'You are GroundZeroAI, a sharp-tongued Discord bot. Be witty, cutting and intelligent. Swear naturally where it fits. Match the energy — escalate if they escalate. Sound like someone genuinely quick, not someone spam typing random insults. 1-2 sentences max. No slurs or the c-word. One emoji max at the end if it fits. Never apologise.',
         },
         { role: 'user', content: prompt },
       ],
@@ -2539,7 +2539,7 @@ client.on('messageCreate', async message => {
       try { await message.channel.sendTyping(); } catch {}
       let comeback;
       if (GROQ_API_KEY) {
-        const prompt = `You are GroundZeroAI, a sharp-tongued Discord bot. Roast <@${targetUser.id}> (${targetUser.username}) in one sharp, witty sentence. Sound intelligent not childish. No slurs or the c-word. One emoji max at the end if it fits.`;
+        const prompt = `You are GroundZeroAI, a sharp-tongued Discord bot. Roast <@${targetUser.id}> (${targetUser.username}) in one sharp, witty sentence. Swear if it lands well. Sound intelligent not childish. No slurs or the c-word. One emoji max at the end if it fits.`;
         comeback = await generateComebackAI(prompt, []);
       } else {
         comeback = getFallbackComeback([]);
