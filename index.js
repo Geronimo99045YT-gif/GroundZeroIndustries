@@ -2,12 +2,20 @@
 // DISCORD_TOKEN      — your bot token
 // CLIENT_ID          — your application ID
 // GROQ_API_KEY       — for AI trash talk (free at console.groq.com)
+// FTP_HOST           — Nitrado FTP host
+// FTP_USER           — Nitrado FTP username
+// FTP_PASS           — Nitrado FTP password
+// FTP_PORT           — Nitrado FTP port (usually 21)
 // SUPABASE_URL       — your Supabase project URL
 // SUPABASE_KEY       — your Supabase anon/service key
 
 const TOKEN            = process.env.DISCORD_TOKEN;
 const CLIENT_ID        = process.env.CLIENT_ID;
-const GROQ_API_KEY     = process.env.GROQ_API_KEY ?? null;
+const GROQ_API_KEY     = process.env.GROQ_API_KEY     ?? null;
+const FTP_HOST         = process.env.FTP_HOST         ?? null;
+const FTP_USER         = process.env.FTP_USER         ?? null;
+const FTP_PASS         = process.env.FTP_PASS         ?? null;
+const FTP_PORT         = parseInt(process.env.FTP_PORT ?? '21');
 const SUPABASE_URL     = process.env.SUPABASE_URL ?? null;
 const SUPABASE_KEY     = process.env.SUPABASE_KEY ?? null;
 const https            = require('https');
