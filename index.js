@@ -132,6 +132,9 @@ async function setAutoRole(guildId, v) { await saveGuildConfig(guildId, { auto_r
 async function getReportsChannel(guildId)    { return (await getGuildConfig(guildId)).reports_channel_id ?? null; }
 async function setReportsChannel(guildId, v) { await saveGuildConfig(guildId, { reports_channel_id: v }); }
 
+async function getHoneypotChannel(guildId)    { return (await getGuildConfig(guildId)).honeypot_channel_id ?? null; }
+async function setHoneypotChannel(guildId, v) { await saveGuildConfig(guildId, { honeypot_channel_id: v }); }
+
 async function getRules(guildId) {
   return (await sbGetRules(guildId)) ?? mem(guildId).rules;
 }
@@ -1114,6 +1117,27 @@ const commands = [
     .setDescription('Post or refresh the rules in the rules channel')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
+  // ── Honeypot Auto-Ban ──────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('sethoneypot')
+    .setDescription('Set a trap channel — anyone who types in it gets instantly banned')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addChannelOption(o =>
+      o.setName('channel')
+        .setDescription('The channel to use as the honeypot trap')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(true))
+    .addBooleanOption(o =>
+      o.setName('post_warning')
+        .setDescription('Post the warning banner image in the channel now? (default: true)')
+        .setRequired(false)),
+
+  new SlashCommandBuilder()
+    .setName('honeypot')
+    .setDescription('Show the current honeypot trap channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
 ].map(c => c.toJSON());
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -2055,6 +2079,67 @@ React with 🎉 to enter!`)
           .setTimestamp(),
       ],
     }).catch(() => {});
+
+  // /sethoneypot
+  } else if (commandName === 'sethoneypot') {
+    const hpChannel   = interaction.options.getChannel('channel');
+    const postWarning = interaction.options.getBoolean('post_warning') ?? true;
+    await setHoneypotChannel(guild.id, hpChannel.id);
+
+    const confirmEmbed = new EmbedBuilder()
+      .setTitle('🍯  Honeypot Trap Set')
+      .setColor(0xED4245)
+      .setDescription(
+        `> <#${hpChannel.id}> is now a **honeypot channel**.\n` +
+        `> Any user who sends a message in it will be **instantly banned** — no warnings.\n` +
+        `> This is designed to catch spam bots that probe every channel.`
+      )
+      .addFields(
+        { name: '🚨 Action on trigger', value: 'Delete message → Ban user → Log to mod channel', inline: false },
+        { name: '💡 Tip', value: 'Make sure the channel is visible to new members / unverified roles so bots can find it. Do NOT tell your real members about it.', inline: false },
+      )
+      .setFooter({ text: `Set by ${user.tag}` })
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
+
+    // Post the warning banner into the honeypot channel so real humans see it and stay out
+    if (postWarning) {
+      const bannerPath = path.join(__dirname, 'warning_banner.png');
+      const bannerExists = fs.existsSync(bannerPath);
+      const warningEmbed = new EmbedBuilder()
+        .setTitle('⛔  DO NOT TYPE IN THIS CHANNEL')
+        .setColor(0xED4245)
+        .setDescription('> **Do NOT send messages, images, or videos in this channel.**\n> Any activity here will result in an **automatic permanent ban**.\n> You have been warned.')
+        .setFooter({ text: 'GroundZeroAI  •  Honeypot Trap' })
+        .setTimestamp();
+
+      const payload = { embeds: [warningEmbed] };
+      if (bannerExists) {
+        const attachment = new AttachmentBuilder(bannerPath, { name: 'warning_banner.png' });
+        warningEmbed.setImage('attachment://warning_banner.png');
+        payload.files = [attachment];
+      }
+      hpChannel.send(payload).catch(err => {
+        console.error(`Honeypot: failed to post warning banner — ${err.message}`);
+      });
+    }
+
+  // /honeypot
+  } else if (commandName === 'honeypot') {
+    const hpId = await getHoneypotChannel(guild.id);
+    const embed = new EmbedBuilder().setColor(0xED4245).setTimestamp();
+    if (hpId) {
+      const ch = guild.channels.cache.get(hpId);
+      embed.setTitle('🍯  Honeypot Trap Status')
+           .setDescription(ch
+             ? `Active trap: <#${hpId}>\nAnyone who types in that channel is **instantly banned**.`
+             : `⚠️ Channel ID \`${hpId}\` is set but no longer exists. Run \`/sethoneypot\` again.`);
+    } else {
+      embed.setTitle('🍯  No Honeypot Set')
+           .setDescription('No honeypot channel configured. Use `/sethoneypot` to set one up.');
+    }
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   }
 });
 
@@ -2504,6 +2589,42 @@ client.on('messageCreate', async message => {
   const lower      = text.toLowerCase();
   const authorId   = message.author.id;
   const botMentioned = message.mentions.has(client.user);
+
+  // ── Honeypot auto-ban ────────────────────────────────────────────────────
+  // Must run before any other logic — delete the message and ban instantly
+  const honeypotChannelId = await getHoneypotChannel(guildId);
+  if (honeypotChannelId && message.channel.id === honeypotChannelId) {
+    // Silently delete the message first so the channel stays clean
+    await message.delete().catch(() => {});
+
+    const member = message.member ?? await message.guild.members.fetch(authorId).catch(() => null);
+    if (member) {
+      try {
+        await message.guild.members.ban(authorId, {
+          reason: '🍯 Honeypot trigger — automated spam-bot ban',
+          deleteMessageSeconds: 0,
+        });
+
+        // Log it to the mod channel
+        const logEmbed = new EmbedBuilder()
+          .setTitle('🍯  Honeypot — Auto-Ban')
+          .setColor(0xED4245)
+          .setDescription(`<@${authorId}> was **automatically banned** for sending a message in the honeypot channel <#${honeypotChannelId}>.`)
+          .addFields(
+            { name: '👤 User',       value: `${message.author.tag} (\`${authorId}\`)`, inline: true },
+            { name: '📝 Message',    value: text.slice(0, 200) || '*(empty)*',         inline: false },
+          )
+          .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
+          .setFooter({ text: 'GroundZeroAI  •  Honeypot Auto-Ban' })
+          .setTimestamp();
+
+        await sendLog(message.guild, logEmbed);
+      } catch (err) {
+        console.error(`Honeypot: failed to ban ${authorId} — ${err.message}`);
+      }
+    }
+    return; // Stop all further processing
+  }
 
   // ── Track message for player stats ──────────────────────────────────────
   if (SUPABASE_URL && SUPABASE_KEY) {
