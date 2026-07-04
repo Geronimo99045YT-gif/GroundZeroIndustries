@@ -1151,70 +1151,70 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('shootplayer')
-    .setDescription('[JOKE] "Target" a player')
+    .setDescription('"Target" a player')
     .addUserOption(o => o.setName('user').setDescription('Player to target').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('stopshooting')
-    .setDescription('[JOKE] Tell the AI to stop shooting'),
+    .setDescription('Tell the AI to stop shooting'),
 
   new SlashCommandBuilder()
     .setName('friendlyplayerarea')
-    .setDescription('[JOKE] Set a friendly no-target radius'),
+    .setDescription('Set a friendly no-target radius'),
 
   new SlashCommandBuilder()
     .setName('followroe')
-    .setDescription('[JOKE] Tell the AI to follow rules of engagement'),
+    .setDescription('Tell the AI to follow rules of engagement'),
 
   new SlashCommandBuilder()
     .setName('friendly')
-    .setDescription('[JOKE] Set the AI to friendly'),
+    .setDescription('Set the AI to friendly'),
 
   new SlashCommandBuilder()
     .setName('friendlyfaction')
-    .setDescription('[JOKE] Make a role friendly to the AI')
+    .setDescription('Make a role friendly to the AI')
     .addRoleOption(o => o.setName('role').setDescription('Role to treat as friendly').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('targetarmbands')
-    .setDescription('[JOKE] Set the AI to target an armband colour')
+    .setDescription('Set the AI to target an armband colour')
     .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
 
   new SlashCommandBuilder()
     .setName('friendlyarmbands')
-    .setDescription('[JOKE] Set the AI to treat an armband colour as friendly')
+    .setDescription('Set the AI to treat an armband colour as friendly')
     .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
 
   new SlashCommandBuilder()
     .setName('partymode')
-    .setDescription('[JOKE] Tell the AI to start dancing'),
+    .setDescription('Tell the AI to start dancing'),
 
   new SlashCommandBuilder()
     .setName('goto')
-    .setDescription('[JOKE] Send the AI to a player\'s last pinged area')
+    .setDescription('Send the AI to a player\'s last pinged area')
     .addStringOption(o => o.setName('username').setDescription('Player username').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('killswitch')
-    .setDescription('[JOKE] Trigger the AI killswitch'),
+    .setDescription('Trigger the AI killswitch'),
 
   new SlashCommandBuilder()
     .setName('boommode')
-    .setDescription('[JOKE] Arm the AI to self-destruct'),
+    .setDescription('Arm the AI to self-destruct'),
 
   new SlashCommandBuilder()
     .setName('followarmbands')
-    .setDescription('[JOKE] Set the AI to follow an armband colour')
+    .setDescription('Set the AI to follow an armband colour')
     .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
 
   new SlashCommandBuilder()
     .setName('protectarmbands')
-    .setDescription('[JOKE] Set the AI to protect an armband colour')
+    .setDescription('Set the AI to protect an armband colour')
     .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
 
   new SlashCommandBuilder()
     .setName('followvoicecommands')
-    .setDescription('[JOKE] Set the AI to follow in-game voice commands'),
+    .setDescription('Set the AI to follow in-game voice commands'),
 
 ].map(c => c.toJSON());
 
