@@ -851,6 +851,15 @@ const categoryChoices = Object.keys(tips).map(k => ({
   value: k,
 }));
 
+// ─── Fake "AI Combat" Prank Commands ──────────────────────────────────────────
+// These commands are purely cosmetic — they don't do anything to the actual
+// game server or any real AI. They just make the bot post a joke response
+// publicly in the channel the command was used in.
+
+const armbandColourChoices = [
+  'Red', 'Blue', 'Green', 'Yellow', 'Orange', 'White', 'Black', 'Pink', 'Purple', 'Grey',
+].map(c => ({ name: c, value: c }));
+
 // ─── Join Keywords ────────────────────────────────────────────────────────────
 // If any of these appear in a message the bot replies with server info
 
@@ -1137,6 +1146,75 @@ const commands = [
     .setName('honeypot')
     .setDescription('Show the current honeypot trap channel')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  // ── Fake "AI Combat" prank commands (cosmetic only, no real effect) ────────
+
+  new SlashCommandBuilder()
+    .setName('shootplayer')
+    .setDescription('[JOKE] "Target" a player')
+    .addUserOption(o => o.setName('user').setDescription('Player to target').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('stopshooting')
+    .setDescription('[JOKE] Tell the AI to stop shooting'),
+
+  new SlashCommandBuilder()
+    .setName('friendlyplayerarea')
+    .setDescription('[JOKE] Set a friendly no-target radius'),
+
+  new SlashCommandBuilder()
+    .setName('followroe')
+    .setDescription('[JOKE] Tell the AI to follow rules of engagement'),
+
+  new SlashCommandBuilder()
+    .setName('friendly')
+    .setDescription('[JOKE] Set the AI to friendly'),
+
+  new SlashCommandBuilder()
+    .setName('friendlyfaction')
+    .setDescription('[JOKE] Make a role friendly to the AI')
+    .addRoleOption(o => o.setName('role').setDescription('Role to treat as friendly').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('targetarmbands')
+    .setDescription('[JOKE] Set the AI to target an armband colour')
+    .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
+
+  new SlashCommandBuilder()
+    .setName('friendlyarmbands')
+    .setDescription('[JOKE] Set the AI to treat an armband colour as friendly')
+    .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
+
+  new SlashCommandBuilder()
+    .setName('partymode')
+    .setDescription('[JOKE] Tell the AI to start dancing'),
+
+  new SlashCommandBuilder()
+    .setName('goto')
+    .setDescription('[JOKE] Send the AI to a player\'s last pinged area')
+    .addStringOption(o => o.setName('username').setDescription('Player username').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('killswitch')
+    .setDescription('[JOKE] Trigger the AI killswitch'),
+
+  new SlashCommandBuilder()
+    .setName('boommode')
+    .setDescription('[JOKE] Arm the AI to self-destruct'),
+
+  new SlashCommandBuilder()
+    .setName('followarmbands')
+    .setDescription('[JOKE] Set the AI to follow an armband colour')
+    .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
+
+  new SlashCommandBuilder()
+    .setName('protectarmbands')
+    .setDescription('[JOKE] Set the AI to protect an armband colour')
+    .addStringOption(o => o.setName('colour').setDescription('Armband colour').setRequired(true).addChoices(...armbandColourChoices)),
+
+  new SlashCommandBuilder()
+    .setName('followvoicecommands')
+    .setDescription('[JOKE] Set the AI to follow in-game voice commands'),
 
 ].map(c => c.toJSON());
 
@@ -2140,6 +2218,61 @@ React with 🎉 to enter!`)
            .setDescription('No honeypot channel configured. Use `/sethoneypot` to set one up.');
     }
     await interaction.reply({ embeds: [embed], ephemeral: true });
+
+  // ── Fake "AI Combat" prank commands ──────────────────────────────────────
+  // Cosmetic only — just posts a message publicly, no real effect on anything.
+
+  } else if (commandName === 'shootplayer') {
+    const target = interaction.options.getUser('user');
+    await interaction.reply(`Now Targeting <@${target.id}> Ai Will now Locate And Fire Apon the Target when spotted`);
+
+  } else if (commandName === 'stopshooting') {
+    await interaction.reply('Ai Will Not Fire Its Weapon Anymore');
+
+  } else if (commandName === 'friendlyplayerarea') {
+    await interaction.reply('The AI Will Not Target Anyone Who Is In a 100M Radius');
+
+  } else if (commandName === 'followroe') {
+    await interaction.reply('The Ai will now Follow Rules Of War');
+
+  } else if (commandName === 'friendly') {
+    await interaction.reply('The Ai Is Now Friendly Towards Everyone Unless Fired upon');
+
+  } else if (commandName === 'friendlyfaction') {
+    const role = interaction.options.getRole('role');
+    await interaction.reply(`The Ai Is Now Friendly To Anyone Who Has The <@&${role.id}> Role`);
+
+  } else if (commandName === 'targetarmbands') {
+    const colour = interaction.options.getString('colour');
+    await interaction.reply(`The Ai will now target anyone wearing ${colour} Armbands`);
+
+  } else if (commandName === 'friendlyarmbands') {
+    const colour = interaction.options.getString('colour');
+    await interaction.reply(`The Ai Will Now Treat Every ${colour} as friendly`);
+
+  } else if (commandName === 'partymode') {
+    await interaction.reply('The Ai Will Now Start Dancing');
+
+  } else if (commandName === 'goto') {
+    const username = interaction.options.getString('username');
+    await interaction.reply(`The ai will now go to ${username} Last Pinged Area`);
+
+  } else if (commandName === 'killswitch') {
+    await interaction.reply('The Ai Will Die within the next 30 seconds');
+
+  } else if (commandName === 'boommode') {
+    await interaction.reply('The ai Will Explode in the next 1 min');
+
+  } else if (commandName === 'followarmbands') {
+    const colour = interaction.options.getString('colour');
+    await interaction.reply(`The Ai Will now Follow anyone wearing ${colour} Armbands`);
+
+  } else if (commandName === 'protectarmbands') {
+    const colour = interaction.options.getString('colour');
+    await interaction.reply(`The Ai will now Protect anyone Wearing ${colour} Armbands`);
+
+  } else if (commandName === 'followvoicecommands') {
+    await interaction.reply('The Ai Will Now Follow Voice Commands In Game chat Proxy');
   }
 });
 
