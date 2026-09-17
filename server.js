@@ -107,8 +107,12 @@ app.get('/auth/discord', (req, res) => {
 });
 
 app.get('/auth/discord/callback', async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).send('Missing code.');
+  const { code, error, error_description } = req.query;
+  if (error) {
+    console.error(`OAuth denied/errored: ${error} — ${error_description ?? ''}`);
+    return res.status(400).send(`Discord login was not completed: ${error_description || error}. <a href="/dashboard/">Try again</a>.`);
+  }
+  if (!code) return res.status(400).send('Discord did not send back a login code. <a href="/dashboard/">Try again</a>.');
   if (!CLIENT_SECRET) return res.status(500).send('Dashboard is not configured (missing DISCORD_CLIENT_SECRET).');
 
   try {
@@ -122,10 +126,13 @@ app.get('/auth/discord/callback', async (req, res) => {
         redirect_uri: redirectUri,
       },
     });
-    if (!token?.access_token) return res.status(401).send('Discord login failed.');
+    if (!token?.access_token) {
+      console.error('Discord token exchange failed:', JSON.stringify(token));
+      return res.status(401).send(`Discord login failed: ${token?.error_description || token?.error || 'unknown error'}. <a href="/dashboard/">Try again</a>.`);
+    }
 
     const user = await discordApi('GET', '/users/@me', { token: token.access_token });
-    if (!user?.id) return res.status(401).send('Could not fetch your Discord profile.');
+    if (!user?.id) return res.status(401).send('Could not fetch your Discord profile. <a href="/dashboard/">Try again</a>.');
 
     const session = signSession({
       id: user.id,
