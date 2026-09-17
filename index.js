@@ -16,8 +16,6 @@ const FTP_HOST         = process.env.FTP_HOST         ?? null;
 const FTP_USER         = process.env.FTP_USER         ?? null;
 const FTP_PASS         = process.env.FTP_PASS         ?? null;
 const FTP_PORT         = parseInt(process.env.FTP_PORT ?? '21');
-const SUPABASE_URL     = process.env.SUPABASE_URL ?? null;
-const SUPABASE_KEY     = process.env.SUPABASE_KEY ?? null;
 const https            = require('https');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,154 +30,29 @@ const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const fs   = require('fs');
 const path = require('path');
 const { setBotClient } = require('./server');
+const db = require('./db');
+const actions = require('./actions');
 
-// ─── Database Layer (Supabase) ────────────────────────────────────────────────
-// Falls back to in-memory store if Supabase is not configured
-
-const memStore = {};
-function mem(guildId) {
-  if (!memStore[guildId]) memStore[guildId] = { rules: {} };
-  return memStore[guildId];
-}
-
-async function sbRequest(method, path2, body = null) {
-  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
-  return new Promise((resolve) => {
-    const hostname = new URL(SUPABASE_URL).hostname;
-    const opts = {
-      hostname, path: path2, method,
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json',
-        ...(method === 'POST' ? { 'Prefer': 'resolution=merge-duplicates,return=minimal' } : {}),
-      },
-    };
-    const req = https.request(opts, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        try { resolve(data ? JSON.parse(data) : null); }
-        catch { resolve(null); }
-      });
-    });
-    req.on('error', () => resolve(null));
-    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
-    if (body) req.write(JSON.stringify(body));
-    req.end();
-  });
-}
-
-// In-memory config cache
-const configCache = {};
-
-async function getGuildConfig(guildId) {
-  if (configCache[guildId]) return configCache[guildId];
-  const rows = await sbRequest('GET', `/rest/v1/guild_config?guild_id=eq.${guildId}&limit=1`);
-  const cfg = (Array.isArray(rows) ? rows[0] : null) ?? { guild_id: guildId };
-  configCache[guildId] = cfg;
-  return cfg;
-}
-
-async function saveGuildConfig(guildId, updates) {
-  if (!configCache[guildId]) configCache[guildId] = { guild_id: guildId };
-  Object.assign(configCache[guildId], updates, { guild_id: guildId, updated_at: new Date().toISOString() });
-  await sbRequest('POST', '/rest/v1/guild_config', configCache[guildId]);
-}
-
-async function sbGetRules(guildId) {
-  const rows = await sbRequest('GET', `/rest/v1/guild_rules?guild_id=eq.${guildId}&order=category,position`);
-  if (!Array.isArray(rows)) return null;
-  const rules = {};
-  for (const row of rows) {
-    if (!rules[row.category]) rules[row.category] = [];
-    rules[row.category].push({ text: row.rule_text, id: row.id });
-  }
-  return rules;
-}
-
-// ── Accessors ─────────────────────────────────────────────────────────────────
-
-async function getLogChannel(guildId) { return (await getGuildConfig(guildId)).log_channel_id ?? null; }
-async function setLogChannel(guildId, v) { await saveGuildConfig(guildId, { log_channel_id: v }); }
-
-async function getServerInfo(guildId) {
-  const c = await getGuildConfig(guildId);
-  return c.server_name ? { name: c.server_name, password: c.server_password, extra: c.server_extra } : null;
-}
-async function setServerInfo(guildId, info) {
-  await saveGuildConfig(guildId, { server_name: info.name, server_password: info.password ?? null, server_extra: info.extra ?? null });
-}
-
-async function getTrashTalk(guildId) { return (await getGuildConfig(guildId)).trash_talk_enabled ?? false; }
-async function setTrashTalk(guildId, v) { await saveGuildConfig(guildId, { trash_talk_enabled: v }); }
-
-async function getRulesChannel(guildId) { return (await getGuildConfig(guildId)).rules_channel_id ?? null; }
-async function setRulesChannel(guildId, v) { await saveGuildConfig(guildId, { rules_channel_id: v }); }
-
-async function getTargetRole(guildId)    { return (await getGuildConfig(guildId)).target_role_id     ?? null; }
-async function setTargetRole(guildId, v) { await saveGuildConfig(guildId, { target_role_id: v }); }
-
-async function getWelcomeChannel(guildId)    { return (await getGuildConfig(guildId)).welcome_channel_id ?? null; }
-async function setWelcomeChannel(guildId, v) { await saveGuildConfig(guildId, { welcome_channel_id: v }); }
-
-async function getWelcomeMessage(guildId)    { return (await getGuildConfig(guildId)).welcome_message ?? null; }
-async function setWelcomeMessage(guildId, v) { await saveGuildConfig(guildId, { welcome_message: v }); }
-
-async function getAutoRole(guildId)    { return (await getGuildConfig(guildId)).auto_role_id ?? null; }
-async function setAutoRole(guildId, v) { await saveGuildConfig(guildId, { auto_role_id: v }); }
-
-async function getReportsChannel(guildId)    { return (await getGuildConfig(guildId)).reports_channel_id ?? null; }
-async function setReportsChannel(guildId, v) { await saveGuildConfig(guildId, { reports_channel_id: v }); }
-
-async function getHoneypotChannel(guildId)    { return (await getGuildConfig(guildId)).honeypot_channel_id ?? null; }
-async function setHoneypotChannel(guildId, v) { await saveGuildConfig(guildId, { honeypot_channel_id: v }); }
-
-async function getRules(guildId) {
-  return (await sbGetRules(guildId)) ?? mem(guildId).rules;
-}
-
-async function addRule(guildId, category, ruleText) {
-  const cat = category.toLowerCase();
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    const existing = await sbGetRules(guildId);
-    const pos = existing?.[cat]?.length ?? 0;
-    await sbRequest('POST', '/rest/v1/guild_rules', { guild_id: guildId, category: cat, rule_text: ruleText, position: pos });
-    const updated = await sbGetRules(guildId);
-    return updated?.[cat]?.length ?? pos + 1;
-  }
-  if (!mem(guildId).rules[cat]) mem(guildId).rules[cat] = [];
-  mem(guildId).rules[cat].push({ text: ruleText, id: Date.now() });
-  return mem(guildId).rules[cat].length;
-}
-
-async function removeRule(guildId, category, index) {
-  const cat = category.toLowerCase();
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    const rules = await sbGetRules(guildId);
-    const catRules = rules?.[cat];
-    if (!catRules || index < 1 || index > catRules.length) return false;
-    await sbRequest('DELETE', `/rest/v1/guild_rules?id=eq.${catRules[index - 1].id}`);
-    return true;
-  }
-  const rules = mem(guildId).rules[cat];
-  if (!rules || index < 1 || index > rules.length) return false;
-  rules.splice(index - 1, 1);
-  if (rules.length === 0) delete mem(guildId).rules[cat];
-  return true;
-}
+const {
+  SUPABASE_URL, SUPABASE_KEY, sbRequest,
+  getLogChannel, setLogChannel,
+  getServerInfo, setServerInfo,
+  getTrashTalk, setTrashTalk,
+  getRulesChannel, setRulesChannel,
+  getTargetRole, setTargetRole,
+  getWelcomeChannel, setWelcomeChannel,
+  getWelcomeMessage, setWelcomeMessage,
+  getAutoRole, setAutoRole,
+  getReportsChannel, setReportsChannel,
+  getHoneypotChannel, setHoneypotChannel,
+  getRules, addRule, removeRule,
+  DAY_NAMES, getSchedules,
+  createGiveaway, getActiveGiveaways, getGiveawayEntries,
+  getPlayerStats, savePlayerStats,
+} = db;
+const { buildRulesEmbeds, buildJoinEmbed } = actions;
 
 // ─── Message Scheduler Engine ────────────────────────────────────────────────
-
-const DAY_NAMES = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-
-async function getSchedules(guildId) {
-  const path = guildId
-    ? `/rest/v1/schedules?guild_id=eq.${guildId}&enabled=eq.true&order=id`
-    : `/rest/v1/schedules?enabled=eq.true`;
-  const rows = await sbRequest('GET', path);
-  return Array.isArray(rows) ? rows : [];
-}
 
 async function runSchedule(schedule) {
   const guild   = client.guilds.cache.get(schedule.guild_id);
@@ -268,93 +141,6 @@ setInterval(checkSchedules, 60 * 1000);
 
 const GIVEAWAY_EMOJI = '🎉';
 
-async function createGiveaway(guildId, channelId, prize, durationMins, winnerCount, hostId) {
-  const endsAt = new Date(Date.now() + durationMins * 60 * 1000).toISOString();
-  const row = { guild_id: guildId, channel_id: channelId, prize, winner_count: winnerCount, ends_at: endsAt, host_id: hostId, ended: false };
-  // Insert and get back the id
-  return new Promise((resolve) => {
-    const body = JSON.stringify(row);
-    const req = https.request({
-      hostname: new URL(SUPABASE_URL).hostname,
-      path: '/rest/v1/giveaways',
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json', 'Prefer': 'return=representation',
-      },
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        try { const rows = JSON.parse(data); resolve(rows[0] ?? null); }
-        catch { resolve(null); }
-      });
-    });
-    req.on('error', () => resolve(null));
-    req.write(body);
-    req.end();
-  });
-}
-
-async function getActiveGiveaways() {
-  const rows = await sbRequest('GET', `/rest/v1/giveaways?ended=eq.false&select=*`);
-  return Array.isArray(rows) ? rows : [];
-}
-
-async function getGiveawayEntries(giveawayId) {
-  const rows = await sbRequest('GET', `/rest/v1/giveaway_entries?giveaway_id=eq.${giveawayId}&select=user_id`);
-  return Array.isArray(rows) ? rows.map(r => r.user_id) : [];
-}
-
-async function endGiveaway(giveawayId, guild) {
-  if (!SUPABASE_URL) return;
-  const rows = await sbRequest('GET', `/rest/v1/giveaways?id=eq.${giveawayId}&limit=1`);
-  const gw = Array.isArray(rows) ? rows[0] : null;
-  if (!gw || gw.ended) return;
-
-  // Mark as ended
-  await sbRequest('POST', '/rest/v1/giveaways', { ...gw, ended: true });
-
-  const entries = await getGiveawayEntries(giveawayId);
-  const channel = guild.channels.cache.get(gw.channel_id);
-  if (!channel) return;
-
-  let msg;
-  try { msg = await channel.messages.fetch(gw.message_id); } catch {}
-
-  if (entries.length === 0) {
-    const noEntry = new EmbedBuilder()
-      .setTitle('🎉  Giveaway Ended')
-      .setColor(0x8B0000)
-      .setDescription(`**${gw.prize}**
-
-No one entered — no winner this time!`)
-      .setFooter({ text: 'GroundZeroAI Giveaways' })
-      .setTimestamp();
-    if (msg) msg.edit({ embeds: [noEntry], components: [] });
-    channel.send({ embeds: [noEntry] });
-    return;
-  }
-
-  // Pick winners
-  const shuffled = entries.sort(() => Math.random() - 0.5);
-  const winners = shuffled.slice(0, Math.min(gw.winner_count, shuffled.length));
-  const winnerMentions = winners.map(id => `<@${id}>`).join(', ');
-
-  const endEmbed = new EmbedBuilder()
-    .setTitle('🎉  Giveaway Ended!')
-    .setColor(0x57F287)
-    .setDescription(`**Prize:** ${gw.prize}
-
-🏆 **Winner${winners.length > 1 ? 's' : ''}:** ${winnerMentions}`)
-    .addFields({ name: 'Entries', value: `${entries.length}`, inline: true })
-    .setFooter({ text: `Hosted by user ${gw.host_id}  •  GroundZeroAI` })
-    .setTimestamp();
-
-  if (msg) msg.edit({ embeds: [endEmbed], components: [] });
-  channel.send({ content: `🎉 Congrats ${winnerMentions}! You won **${gw.prize}**!`, embeds: [endEmbed] });
-}
-
 // Check for expired giveaways every 30 seconds
 async function checkGiveaways() {
   if (!SUPABASE_URL || !client.isReady()) return;
@@ -362,10 +148,7 @@ async function checkGiveaways() {
     const now = new Date().toISOString();
     const rows = await sbRequest('GET', `/rest/v1/giveaways?ended=eq.false&ends_at=lt.${now}`);
     if (!Array.isArray(rows)) return;
-    for (const gw of rows) {
-      const guild = client.guilds.cache.get(gw.guild_id);
-      if (guild) await endGiveaway(gw.id, guild);
-    }
+    for (const gw of rows) await actions.endGiveaway(gw.id);
   } catch {}
 }
 setInterval(checkGiveaways, 30 * 1000);
@@ -395,11 +178,6 @@ function izurviveLink(x, z) {
 
 // In-memory write buffer — flushes to Supabase every 2 minutes to save API calls
 const statsBuffer = new Map(); // `${guildId}:${userId}` -> pending updates
-
-async function getPlayerStats(guildId, userId) {
-  const rows = await sbRequest('GET', `/rest/v1/player_stats?guild_id=eq.${guildId}&user_id=eq.${userId}&limit=1`);
-  return Array.isArray(rows) ? rows[0] ?? null : null;
-}
 
 async function flushStatsBuffer() {
   if (statsBuffer.size === 0) return;
@@ -466,65 +244,6 @@ function bufferMessage(guildId, userId, username, channelId, text, hour) {
   if (text.length > 15 && b.samples.length < 5) {
     b.samples.push(text.slice(0, 120));
   }
-}
-
-async function generateStyleAnalysis(stats) {
-  if (!GROQ_API_KEY || !stats.message_samples?.length) return null;
-
-  const samples = stats.message_samples.slice(-20).join(' | ');
-  const ha = stats.hourly_activity ?? {};
-  const peakHour = Object.entries(ha).sort((a,b)=>b[1]-a[1])[0]?.[0];
-  const peakLabel = peakHour ? `${peakHour}:00 UTC` : 'unknown';
-
-  const prompt = `Analyse these Discord messages and return ONLY a JSON object with no extra text:
-
-Messages: "${samples}"
-Total messages: ${stats.message_count}
-Peak activity: ${peakLabel}
-
-Return this exact JSON structure:
-{
-  "vibe": "one of: Aggressive | Chill | Chaotic | Friendly | Quiet | Loud | Toxic | Helpful | Sarcastic | Mixed",
-  "energy": "one of: High | Medium | Low",
-  "helps_others": "one of: Often | Sometimes | Rarely | Never",
-  "summary": "2 sentences max. Specific observations about their tone and how they communicate.",
-  "red_flags": "one sentence or null if none. Any concerning patterns like aggression or toxicity.",
-  "standout": "one short phrase describing what makes their style distinct"
-}`;
-
-  return new Promise((resolve) => {
-    const body = JSON.stringify({
-      model: 'llama-3.1-8b-instant',
-      max_tokens: 250,
-      messages: [
-        { role: 'system', content: 'You are a Discord community analyst. Return only valid JSON, no markdown, no explanation.' },
-        { role: 'user', content: prompt },
-      ],
-    });
-    const req = https.request({
-      hostname: 'api.groq.com',
-      path: '/openai/v1/chat/completions',
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        try {
-          const p = JSON.parse(data);
-          const text = p.choices?.[0]?.message?.content?.trim();
-          // Strip any markdown fences just in case
-          const clean = text?.replace(/```json|```/g, '').trim();
-          const parsed = JSON.parse(clean);
-          resolve(parsed);
-        } catch { resolve(null); }
-      });
-    });
-    req.on('error', () => resolve(null));
-    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
-    req.write(body);
-    req.end();
-  });
 }
 
 // ─── Loot Data ────────────────────────────────────────────────────────────────
@@ -1156,6 +875,7 @@ const client = new Client({
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   setBotClient(client);
+  actions.setClient(client);
   client.user.setPresence({
     activities: [{ name: 'Porn Hub', type: 3 }], // 3 = Watching
     status: 'online',
@@ -1281,7 +1001,7 @@ client.on('interactionCreate', async interaction => {
   // /postrules
   } else if (commandName === 'postrules') {
     await interaction.deferReply({ ephemeral: true });
-    const success = await postRulesToChannel(guild);
+    const success = await actions.postRulesToChannel(guild.id);
     if (!success) {
       await interaction.editReply({
         embeds: [
@@ -1562,7 +1282,7 @@ React with 🎉 to enter!`)
     const gw    = Array.isArray(rows) ? rows[0] : null;
     if (!gw) { await interaction.reply({ content: 'Giveaway not found.', ephemeral: true }); return; }
     await interaction.deferReply({ ephemeral: true });
-    await endGiveaway(gw.id, guild);
+    await actions.endGiveaway(gw.id);
     await interaction.editReply({ content: '✅ Giveaway ended.' });
 
   // /greroll
@@ -1646,7 +1366,7 @@ React with 🎉 to enter!`)
     // Flush buffer first so we have latest data
     await flushStatsBuffer();
 
-    const stats = await getPlayerStats(guild.id, target.id);
+    const { stats, analysis } = await actions.getOrRefreshStyleAnalysis(guild.id, target.id);
     if (!stats || stats.message_count === 0) {
       await interaction.editReply({ content: `No data found for ${target.username} yet — they may not have chatted since the bot was set up.` });
       return;
@@ -1666,21 +1386,6 @@ React with 🎉 to enter!`)
 
     const firstSeen = stats.first_seen ? `<t:${Math.floor(new Date(stats.first_seen).getTime()/1000)}:D>` : 'Unknown';
     const lastSeen  = stats.last_seen  ? `<t:${Math.floor(new Date(stats.last_seen).getTime()/1000)}:R>`  : 'Unknown';
-
-    // Regenerate analysis if stale (older than 24h) or missing
-    let analysis = null;
-    try { analysis = stats.style_summary ? JSON.parse(stats.style_summary) : null; } catch {}
-    const summaryAge = stats.style_updated_at ? Date.now() - new Date(stats.style_updated_at).getTime() : Infinity;
-    if ((!analysis || summaryAge > 24 * 60 * 60 * 1000) && stats.message_samples?.length > 3) {
-      analysis = await generateStyleAnalysis(stats);
-      if (analysis) {
-        await sbRequest('POST', '/rest/v1/player_stats', {
-          ...stats,
-          style_summary: JSON.stringify(analysis),
-          style_updated_at: new Date().toISOString(),
-        });
-      }
-    }
 
     // Pick embed colour based on vibe
     const vibeColors = {
@@ -2142,109 +1847,6 @@ React with 🎉 to enter!`)
     await interaction.reply({ embeds: [embed], ephemeral: true });
   }
 });
-
-// ─── Rules Embed Builder ─────────────────────────────────────────────────────
-
-const CATEGORY_COLORS = [0x8B0000, 0x1a6b8a, 0x4a7c3f, 0x7b5ea7, 0xc07a1a, 0x8a3a3a];
-const CATEGORY_EMOJI_MAP = {
-  general:   '📋', combat:  '⚔️',  base:    '🏠',
-  vehicles:  '🚗', looting: '🎒', kos:     '💀',
-  reporting: '📢', chat:    '💬', other:   '📌',
-};
-
-function buildRulesEmbeds(rules) {
-  const categories = Object.keys(rules);
-  if (categories.length === 0) return null;
-
-  return categories.map((cat, i) => {
-    const emoji = CATEGORY_EMOJI_MAP[cat.toLowerCase()] ?? '📌';
-    const label = cat.charAt(0).toUpperCase() + cat.slice(1);
-    const ruleList = rules[cat]
-      .map((r, idx) => `**${idx + 1}.** ${typeof r === 'object' ? r.text : r}`)
-      .join('\n');
-
-    return new EmbedBuilder()
-      .setTitle(`${emoji}  ${label} Rules`)
-      .setDescription(ruleList)
-      .setColor(CATEGORY_COLORS[i % CATEGORY_COLORS.length])
-      .setFooter({ text: '🪖 GroundZeroAI  •  Break the rules, face the consequences.' });
-  });
-}
-
-async function postRulesToChannel(guild) {
-  const channelId = await getRulesChannel(guild.id);
-  if (!channelId) return false;
-  const ch = guild.channels.cache.get(channelId);
-  if (!ch) return false;
-
-  const rules = await getRules(guild.id);
-  const embeds = buildRulesEmbeds(rules);
-  if (!embeds) return false;
-
-  // Delete previous bot messages in the rules channel then repost fresh
-  try {
-    const messages = await ch.messages.fetch({ limit: 50 });
-    const botMessages = messages.filter(m => m.author.id === guild.client.user.id);
-    for (const msg of botMessages.values()) await msg.delete().catch(() => {});
-  } catch {}
-
-  // Post header then one embed per category
-  const header = new EmbedBuilder()
-    .setTitle('📜  Server Rules')
-    .setDescription('> Read and follow all rules listed below.\n> **Ignorance is not an excuse.** Rule breakers will be moderated.')
-    .setColor(0x8B0000)
-    .setFooter({ text: '🪖 GroundZeroAI  •  Last updated' })
-    .setTimestamp();
-
-  await ch.send({ embeds: [header] });
-  for (const embed of embeds) {
-    await ch.send({ embeds: [embed] });
-  }
-  return true;
-}
-
-// ─── Join Info Embed Builder ──────────────────────────────────────────────────
-
-function buildJoinEmbed(info) {
-  const fields = [
-    {
-      name: '1️⃣  Launch DayZ',
-      value: 'Open DayZ on your Xbox and head to **Play → Community Servers**.',
-    },
-    {
-      name: '2️⃣  Search for the server',
-      value: [
-        'In the search bar, type the server name exactly:',
-        `\`\`\`${info.name}\`\`\``,
-      ].join('\n'),
-    },
-    {
-      name: '3️⃣  Connect',
-      value: 'Click the server from the list and hit **Join**.',
-    },
-  ];
-
-  if (info.password) {
-    fields.push({
-      name: '🔒  Password',
-      value: `When prompted, enter: \`${info.password}\``,
-    });
-  }
-  if (info.extra) {
-    fields.push({ name: '📋  Extra Info', value: info.extra });
-  }
-
-  return new EmbedBuilder()
-    .setTitle('<:xbox:> How to Join Our DayZ Server')
-    .setTitle('🎮  How to Join Our DayZ Server')
-    .setColor(0x107C10) // Xbox green
-    .setDescription(
-      '> Welcome! Follow the steps below to get into the server.\n> If you still can\'t find it, ask a member for help.'
-    )
-    .addFields(fields)
-    .setFooter({ text: '🪖 GroundZeroAI  •  Livonia (Enoch)' })
-    .setTimestamp();
-}
 
 // ─── Trash Talk Engine ───────────────────────────────────────────────────────
 

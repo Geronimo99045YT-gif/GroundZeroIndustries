@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>GroundZeroAI — Dashboard</title>
+<link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+
+<div id="loggedOut" class="center-screen" hidden>
+  <div class="logo-big">🪖</div>
+  <h1>GroundZeroAI Dashboard</h1>
+  <p class="muted">Sign in with Discord to manage servers where you're an admin.</p>
+  <a class="btn primary" style="padding:12px 24px;font-size:15px" href="/auth/discord">Login with Discord</a>
+  <p class="muted"><a href="/">&larr; Back to status page</a></p>
+</div>
+
+<div id="loggedIn" hidden>
+  <div class="topbar">
+    <div class="brand">🪖 GroundZeroAI</div>
+    <div class="user">
+      <span id="username"></span>
+      <a class="btn" href="/auth/logout">Log out</a>
+    </div>
+  </div>
+  <div class="wrap">
+    <h2 style="margin-bottom:6px">Your servers</h2>
+    <p class="muted" style="margin-bottom:20px">Servers where you have Administrator and GroundZeroAI is present.</p>
+    <div id="guildGrid" class="guild-grid"></div>
+    <p id="noGuilds" class="muted" hidden style="margin-top:20px">No manageable servers found. Make sure the bot is invited and you have Administrator there.</p>
+  </div>
+</div>
+
+<script src="api.js"></script>
+<script>
+(async function () {
+  try {
+    const me = await api('/api/me');
+    document.getElementById('username').textContent = me.username;
+    document.getElementById('loggedIn').hidden = false;
+
+    const guilds = await api('/api/guilds');
+    const grid = document.getElementById('guildGrid');
+    if (guilds.length === 0) {
+      document.getElementById('noGuilds').hidden = false;
+    }
+    grid.innerHTML = guilds.map(g => `
+      <a class="guild-card" href="guild.html?id=${encodeURIComponent(g.id)}">
+        ${g.icon ? `<img src="${g.icon}" alt="">` : `<img src="data:image/svg+xml,${encodeURIComponent('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'56\' height=\'56\'><rect width=\'56\' height=\'56\' rx=\'28\' fill=\'%235865F2\'/></svg>')}" alt="">`}
+        <div class="name">${escapeHtml(g.name)}</div>
+        <div class="members">${g.memberCount.toLocaleString()} members</div>
+      </a>
+    `).join('');
+  } catch {
+    document.getElementById('loggedOut').hidden = false;
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>GroundZeroAI — Dashboard</title>
+<link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">🪖 <span id="guildName">GroundZeroAI</span></div>
+  <div class="user">
+    <a href="index.html">&larr; All servers</a>
+    <a class="btn" href="/auth/logout">Log out</a>
+  </div>
+</div>
+
+<div class="wrap">
+  <p id="loading" class="muted">Loading…</p>
+  <div id="errorBox" class="msg error" hidden></div>
+
+  <div id="app" hidden>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="overview">Overview</button>
+      <button class="tab-btn" data-tab="serverinfo">Server Info</button>
+      <button class="tab-btn" data-tab="channels">Channels &amp; Roles</button>
+      <button class="tab-btn" data-tab="rules">Rules</button>
+      <button class="tab-btn" data-tab="trashtalk">Trash Talk</button>
+      <button class="tab-btn" data-tab="schedules">Schedules</button>
+      <button class="tab-btn" data-tab="giveaways">Giveaways</button>
+      <button class="tab-btn" data-tab="stats">Player Stats</button>
+    </div>
+
+    <!-- Overview -->
+    <div class="tab-panel active" id="tab-overview">
+      <div class="card">
+        <h2>Bot Status</h2>
+        <div class="grid cols-3" id="overviewStats"></div>
+      </div>
+      <div class="card">
+        <h2>About the dashboard</h2>
+        <p class="muted">This panel covers everything the bot stores per-server: join info, channel/role wiring, rules, scheduled messages, giveaways, and player activity. Moderation actions (kick/ban/mute/warn) stay as Discord slash commands since they need to happen in the moment, in context.</p>
+      </div>
+    </div>
+
+    <!-- Server Info -->
+    <div class="tab-panel" id="tab-serverinfo">
+      <div class="card">
+        <h2>DayZ Server Join Info</h2>
+        <div id="serverInfoMsg" class="msg hidden"></div>
+        <form id="serverInfoForm">
+          <div class="field"><label>Server Name (as it appears in DayZ)</label><input name="name"></div>
+          <div class="field"><label>Password (leave blank if none)</label><input name="password"></div>
+          <div class="field"><label>Extra join instructions</label><textarea name="extra" rows="2"></textarea></div>
+          <button class="primary" type="submit">Save</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Channels & Roles -->
+    <div class="tab-panel" id="tab-channels">
+      <div class="card">
+        <h2>Channels &amp; Roles</h2>
+        <div id="channelsMsg" class="msg hidden"></div>
+        <form id="channelsForm">
+          <div class="grid cols-2">
+            <div class="field"><label>Mod Log Channel</label><select name="logChannel"></select></div>
+            <div class="field"><label>Rules Channel</label><select name="rulesChannel"></select></div>
+            <div class="field"><label>Welcome Channel</label><select name="welcomeChannel"></select></div>
+            <div class="field"><label>Reports Channel</label><select name="reportsChannel"></select></div>
+            <div class="field"><label>Honeypot Trap Channel</label><select name="honeypotChannel"></select></div>
+            <div class="field"><label>Auto-Role (new members)</label><select name="autoRole"></select></div>
+            <div class="field"><label>Target Role (who can use the target command)</label><select name="targetRole"></select></div>
+          </div>
+          <div class="field"><label>Welcome Message (use {user} and {server})</label><textarea name="welcomeMessage" rows="2"></textarea></div>
+          <div class="row">
+            <button class="primary" type="submit">Save All</button>
+            <button class="btn" type="button" id="postWarningBtn">Post Honeypot Warning Now</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Rules -->
+    <div class="tab-panel" id="tab-rules">
+      <div class="card">
+        <h2>Server Rules</h2>
+        <div id="rulesMsg" class="msg hidden"></div>
+        <div id="rulesList"></div>
+        <div class="section-title">Add a rule</div>
+        <form id="addRuleForm" class="row">
+          <div class="field"><label>Category</label><input name="category" placeholder="e.g. Combat" required></div>
+          <div class="field" style="flex:3"><label>Rule text</label><input name="rule" required></div>
+          <button class="primary" type="submit" style="flex:0 0 auto">Add</button>
+        </form>
+        <div style="margin-top:14px">
+          <button class="btn" id="postRulesBtn">Post / Refresh Rules Channel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trash Talk -->
+    <div class="tab-panel" id="tab-trashtalk">
+      <div class="card">
+        <h2>AI Trash Talk</h2>
+        <p class="muted" style="margin-bottom:14px">When someone insults the bot (or a targeted user), it claps back with an AI-generated roast. This is separate from moderation — purely for banter.</p>
+        <div class="checkbox-row">
+          <input type="checkbox" id="trashTalkToggle">
+          <label style="margin:0" for="trashTalkToggle">Trash talk mode enabled</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Schedules -->
+    <div class="tab-panel" id="tab-schedules">
+      <div class="card">
+        <h2>Scheduled Messages</h2>
+        <div id="schedulesMsg" class="msg hidden"></div>
+        <div id="schedulesList"></div>
+        <div class="section-title">New schedule</div>
+        <form id="scheduleForm">
+          <div class="grid cols-2">
+            <div class="field"><label>Channel</label><select name="channelId" required></select></div>
+            <div class="field"><label>Type</label>
+              <select name="type" id="scheduleType">
+                <option value="once">Once — specific date/time</option>
+                <option value="minutes">Every X minutes</option>
+                <option value="hours">Every X hours</option>
+                <option value="daily">Daily at a set time</option>
+                <option value="weekly">Weekly on a set day</option>
+              </select>
+            </div>
+          </div>
+          <div class="field"><label>Message (or bot prefix command like !restart)</label><input name="message" required></div>
+          <div class="grid cols-2">
+            <div class="field"><label id="timeLabel">Time (YYYY-MM-DD HH:MM)</label><input name="time" required></div>
+            <div class="field" id="dayField" hidden><label>Day (weekly only)</label>
+              <select name="day">
+                <option value="sunday">Sunday</option><option value="monday">Monday</option>
+                <option value="tuesday">Tuesday</option><option value="wednesday">Wednesday</option>
+                <option value="thursday">Thursday</option><option value="friday">Friday</option>
+                <option value="saturday">Saturday</option>
+              </select>
+            </div>
+          </div>
+          <button class="primary" type="submit">Create Schedule</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Giveaways -->
+    <div class="tab-panel" id="tab-giveaways">
+      <div class="card">
+        <h2>Giveaways</h2>
+        <div id="giveawaysMsg" class="msg hidden"></div>
+        <div id="giveawaysList"></div>
+        <div class="section-title">Start a giveaway</div>
+        <form id="giveawayForm">
+          <div class="grid cols-2">
+            <div class="field"><label>Channel</label><select name="channelId" required></select></div>
+            <div class="field"><label>Duration (minutes)</label><input name="durationMins" type="number" min="1" required></div>
+          </div>
+          <div class="grid cols-2">
+            <div class="field"><label>Prize</label><input name="prize" required></div>
+            <div class="field"><label>Winners</label><input name="winners" type="number" min="1" value="1"></div>
+          </div>
+          <button class="primary" type="submit">Start Giveaway</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Player Stats -->
+    <div class="tab-panel" id="tab-stats">
+      <div class="card">
+        <h2>Top Chatters</h2>
+        <div id="topStatsList" class="muted">Loading…</div>
+      </div>
+      <div class="card">
+        <h2>Look Up a Player</h2>
+        <form id="statsForm" class="row">
+          <div class="field"><label>Discord User ID</label><input name="userId" required></div>
+          <button class="primary" type="submit" style="flex:0 0 auto">Look Up</button>
+        </form>
+        <div id="statsResult"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="api.js"></script>
+<script src="guild.js"></script>
+</body>
+</html>

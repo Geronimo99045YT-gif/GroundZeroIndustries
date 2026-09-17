@@ -1,6 +1,16 @@
-const http = require('http');
+const express      = require('express');
+const cookieParser = require('cookie-parser');
+const crypto       = require('crypto');
+const https        = require('https');
 
-const PORT = process.env.PORT || 3000;
+const db      = require('./db');
+const actions = require('./actions');
+
+const PORT             = process.env.PORT || 3000;
+const CLIENT_ID        = process.env.CLIENT_ID;
+const CLIENT_SECRET    = process.env.DISCORD_CLIENT_SECRET;
+const SESSION_SECRET   = process.env.SESSION_SECRET || 'dev-only-insecure-secret-change-me';
+const PUBLIC_URL        = process.env.PUBLIC_URL ?? null;
 
 let botClient = null;
 let startTime = Date.now();
@@ -20,21 +30,389 @@ function formatUptime(ms) {
   return `${s}s`;
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/status' && req.method === 'GET') {
-    const online  = botClient?.isReady() ?? false;
-    const payload = {
-      online,
-      ping:    online ? botClient.ws.ping : null,
-      uptime:  formatUptime(Date.now() - startTime),
-      guilds:  online ? botClient.guilds.cache.size : 0,
-      tag:     online ? botClient.user.tag : null,
-    };
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(payload));
-    return;
+const app = express();
+app.set('trust proxy', 1);
+app.use(cookieParser());
+app.use(express.json());
+app.use('/dashboard', express.static(require('path').join(__dirname, 'public', 'dashboard')));
+
+function baseUrl(req) {
+  return PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+}
+
+// ─── Session cookies (signed, stateless — survives Render restarts) ───────────
+
+const SESSION_COOKIE = 'gz_session';
+
+function signSession(payload) {
+  const json = JSON.stringify(payload);
+  const data = Buffer.from(json, 'utf8').toString('base64url');
+  const sig  = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  return `${data}.${sig}`;
+}
+
+function verifySession(token) {
+  if (!token) return null;
+  const [data, sig] = token.split('.');
+  if (!data || !sig) return null;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function readSession(req) {
+  return verifySession(req.cookies[SESSION_COOKIE]);
+}
+
+// ─── Discord OAuth ─────────────────────────────────────────────────────────────
+
+function discordApi(method, path, { token, form } = {}) {
+  return new Promise((resolve, reject) => {
+    const body = form ? new URLSearchParams(form).toString() : null;
+    const req = https.request({
+      hostname: 'discord.com',
+      path: `/api${path}`,
+      method,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } : {}),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { resolve(null); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('Discord API timeout')); });
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+app.get('/auth/discord', (req, res) => {
+  const redirectUri = `${baseUrl(req)}/auth/discord/callback`;
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.searchParams.set('client_id', CLIENT_ID);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'identify guilds');
+  res.redirect(url.toString());
+});
+
+app.get('/auth/discord/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Missing code.');
+  if (!CLIENT_SECRET) return res.status(500).send('Dashboard is not configured (missing DISCORD_CLIENT_SECRET).');
+
+  try {
+    const redirectUri = `${baseUrl(req)}/auth/discord/callback`;
+    const token = await discordApi('POST', '/oauth2/token', {
+      form: {
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+      },
+    });
+    if (!token?.access_token) return res.status(401).send('Discord login failed.');
+
+    const user = await discordApi('GET', '/users/@me', { token: token.access_token });
+    if (!user?.id) return res.status(401).send('Could not fetch your Discord profile.');
+
+    const session = signSession({
+      id: user.id,
+      username: user.username,
+      avatar: user.avatar,
+      accessToken: token.access_token,
+      exp: Date.now() + (token.expires_in ?? 604800) * 1000,
+    });
+
+    res.cookie(SESSION_COOKIE, session, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      maxAge: (token.expires_in ?? 604800) * 1000,
+    });
+    res.redirect('/dashboard/');
+  } catch (err) {
+    console.error('OAuth callback failed:', err.message);
+    res.status(500).send('Login failed — please try again.');
+  }
+});
+
+app.get('/auth/logout', (req, res) => {
+  res.clearCookie(SESSION_COOKIE);
+  res.redirect('/dashboard/');
+});
+
+// ─── Guild permission checks ────────────────────────────────────────────────────
+
+const ADMINISTRATOR = 0x8n;
+const userGuildsCache = new Map(); // userId -> { guilds, fetchedAt }
+
+async function getUserGuilds(session) {
+  const cached = userGuildsCache.get(session.id);
+  if (cached && Date.now() - cached.fetchedAt < 60_000) return cached.guilds;
+  const guilds = await discordApi('GET', '/users/@me/guilds', { token: session.accessToken });
+  const list = Array.isArray(guilds) ? guilds : [];
+  userGuildsCache.set(session.id, { guilds: list, fetchedAt: Date.now() });
+  return list;
+}
+
+function isAdminOf(guildEntry) {
+  if (!guildEntry) return false;
+  if (guildEntry.owner) return true;
+  try { return (BigInt(guildEntry.permissions) & ADMINISTRATOR) === ADMINISTRATOR; }
+  catch { return false; }
+}
+
+function requireAuth(req, res, next) {
+  const session = readSession(req);
+  if (!session) return res.status(401).json({ error: 'Not logged in.' });
+  req.gzSession = session;
+  next();
+}
+
+async function requireGuildAdmin(req, res, next) {
+  const guildId = req.params.guildId;
+  const guild = botClient?.guilds.cache.get(guildId);
+  if (!guild) return res.status(404).json({ error: "The bot isn't in that server." });
+
+  const userGuilds = await getUserGuilds(req.gzSession);
+  const entry = userGuilds.find(g => g.id === guildId);
+  if (!isAdminOf(entry)) return res.status(403).json({ error: "You don't have admin rights on that server." });
+
+  req.gzGuild = guild;
+  next();
+}
+
+// ─── API: identity & guild list ────────────────────────────────────────────────
+
+app.get('/api/me', requireAuth, (req, res) => {
+  res.json({ id: req.gzSession.id, username: req.gzSession.username, avatar: req.gzSession.avatar });
+});
+
+app.get('/api/guilds', requireAuth, async (req, res) => {
+  const userGuilds = await getUserGuilds(req.gzSession);
+  const mutual = userGuilds
+    .filter(isAdminOf)
+    .map(g => botClient?.guilds.cache.get(g.id))
+    .filter(Boolean)
+    .map(g => ({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }), memberCount: g.memberCount }));
+  res.json(mutual);
+});
+
+// ─── API: per-guild overview ────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/overview', requireAuth, requireGuildAdmin, (req, res) => {
+  const g = req.gzGuild;
+  res.json({
+    name: g.name,
+    icon: g.iconURL({ size: 128 }),
+    memberCount: g.memberCount,
+    createdAt: g.joinedAt,
+    botOnline: botClient?.isReady() ?? false,
+    botPing: botClient?.isReady() ? botClient.ws.ping : null,
+    botUptime: formatUptime(Date.now() - startTime),
+  });
+});
+
+app.get('/api/guilds/:guildId/channels', requireAuth, requireGuildAdmin, (req, res) => {
+  const channels = req.gzGuild.channels.cache
+    .filter(c => c.type === 0) // GuildText
+    .map(c => ({ id: c.id, name: c.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  res.json(channels);
+});
+
+app.get('/api/guilds/:guildId/roles', requireAuth, requireGuildAdmin, (req, res) => {
+  const roles = req.gzGuild.roles.cache
+    .filter(r => r.id !== req.gzGuild.id && !r.managed)
+    .map(r => ({ id: r.id, name: r.name, color: r.hexColor }))
+    .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name));
+  res.json(roles);
+});
+
+// ─── API: config (server info, channels, roles, trash talk) ───────────────────
+
+app.get('/api/guilds/:guildId/config', requireAuth, requireGuildAdmin, async (req, res) => {
+  const guildId = req.params.guildId;
+  const [serverInfo, logChannel, rulesChannel, welcomeChannel, welcomeMessage, autoRole, reportsChannel, honeypotChannel, targetRole, trashTalk] = await Promise.all([
+    db.getServerInfo(guildId), db.getLogChannel(guildId), db.getRulesChannel(guildId),
+    db.getWelcomeChannel(guildId), db.getWelcomeMessage(guildId), db.getAutoRole(guildId),
+    db.getReportsChannel(guildId), db.getHoneypotChannel(guildId), db.getTargetRole(guildId),
+    db.getTrashTalk(guildId),
+  ]);
+  res.json({ serverInfo, logChannel, rulesChannel, welcomeChannel, welcomeMessage, autoRole, reportsChannel, honeypotChannel, targetRole, trashTalk });
+});
+
+app.put('/api/guilds/:guildId/config', requireAuth, requireGuildAdmin, async (req, res) => {
+  const guildId = req.params.guildId;
+  const body = req.body ?? {};
+  const jobs = [];
+
+  if ('serverInfo' in body) jobs.push(db.setServerInfo(guildId, body.serverInfo ?? {}));
+  if ('logChannel' in body) jobs.push(db.setLogChannel(guildId, body.logChannel || null));
+  if ('rulesChannel' in body) jobs.push(db.setRulesChannel(guildId, body.rulesChannel || null));
+  if ('welcomeChannel' in body) jobs.push(db.setWelcomeChannel(guildId, body.welcomeChannel || null));
+  if ('welcomeMessage' in body) jobs.push(db.setWelcomeMessage(guildId, body.welcomeMessage || null));
+  if ('autoRole' in body) jobs.push(db.setAutoRole(guildId, body.autoRole || null));
+  if ('reportsChannel' in body) jobs.push(db.setReportsChannel(guildId, body.reportsChannel || null));
+  if ('honeypotChannel' in body) jobs.push(db.setHoneypotChannel(guildId, body.honeypotChannel || null));
+  if ('targetRole' in body) jobs.push(db.setTargetRole(guildId, body.targetRole || null));
+  if ('trashTalk' in body) jobs.push(db.setTrashTalk(guildId, !!body.trashTalk));
+
+  await Promise.all(jobs);
+  res.json({ ok: true });
+});
+
+app.post('/api/guilds/:guildId/honeypot/warn', requireAuth, requireGuildAdmin, async (req, res) => {
+  const ok = await actions.postHoneypotWarning(req.params.guildId);
+  res.json({ ok });
+});
+
+// ─── API: rules ──────────────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/rules', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getRules(req.params.guildId));
+});
+
+app.post('/api/guilds/:guildId/rules', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { category, rule } = req.body ?? {};
+  if (!category || !rule) return res.status(400).json({ error: 'category and rule are required.' });
+  const num = await db.addRule(req.params.guildId, String(category).trim(), String(rule).trim());
+  res.json({ ok: true, number: num });
+});
+
+app.delete('/api/guilds/:guildId/rules/:category/:number', requireAuth, requireGuildAdmin, async (req, res) => {
+  const success = await db.removeRule(req.params.guildId, req.params.category, parseInt(req.params.number, 10));
+  if (!success) return res.status(404).json({ error: 'Rule not found.' });
+  res.json({ ok: true });
+});
+
+app.post('/api/guilds/:guildId/rules/post', requireAuth, requireGuildAdmin, async (req, res) => {
+  const success = await actions.postRulesToChannel(req.params.guildId);
+  if (!success) return res.status(400).json({ error: 'Set a rules channel and add at least one rule first.' });
+  res.json({ ok: true });
+});
+
+// ─── API: schedules ──────────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/schedules', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getSchedules(req.params.guildId));
+});
+
+app.post('/api/guilds/:guildId/schedules', requireAuth, requireGuildAdmin, async (req, res) => {
+  const guildId = req.params.guildId;
+  const { channelId, message, type, time, day } = req.body ?? {};
+  if (!channelId || !message || !type) return res.status(400).json({ error: 'channelId, message and type are required.' });
+
+  const row = {
+    guild_id: guildId, channel_id: channelId, message,
+    is_bot_command: !message.startsWith('/') && /^[!?$\\.~]/.test(message),
+    created_by: req.gzSession.id, enabled: true,
+  };
+
+  if (type === 'once') {
+    const dt = new Date(time);
+    if (isNaN(dt)) return res.status(400).json({ error: 'Invalid date/time.' });
+    row.recurring = false;
+    row.run_once_at = dt.toISOString();
+  } else if (type === 'minutes' || type === 'hours') {
+    const val = parseInt(time, 10);
+    if (isNaN(val) || val < 1) return res.status(400).json({ error: 'Provide a positive interval.' });
+    row.recurring = true;
+    row.interval_type = type;
+    row.interval_value = val;
+  } else if (type === 'daily') {
+    if (!/^\d{1,2}:\d{2}$/.test(time)) return res.status(400).json({ error: 'Use HH:MM format (UTC).' });
+    row.recurring = true;
+    row.interval_type = 'daily';
+    row.run_at_time = time;
+  } else if (type === 'weekly') {
+    if (!/^\d{1,2}:\d{2}$/.test(time)) return res.status(400).json({ error: 'Use HH:MM format (UTC).' });
+    const dayNum = db.DAY_NAMES.indexOf(String(day ?? '').toLowerCase());
+    if (dayNum === -1) return res.status(400).json({ error: 'Provide a valid day name.' });
+    row.recurring = true;
+    row.interval_type = 'weekly';
+    row.interval_value = dayNum;
+    row.run_at_time = time;
+  } else {
+    return res.status(400).json({ error: 'Unknown schedule type.' });
   }
 
+  await db.createSchedule(row);
+  res.json({ ok: true });
+});
+
+app.delete('/api/guilds/:guildId/schedules/:id', requireAuth, requireGuildAdmin, async (req, res) => {
+  await db.deleteSchedule(parseInt(req.params.id, 10), req.params.guildId);
+  res.json({ ok: true });
+});
+
+// ─── API: giveaways ──────────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/giveaways', requireAuth, requireGuildAdmin, async (req, res) => {
+  const active = await db.getActiveGiveaways(req.params.guildId);
+  const withEntries = await Promise.all(active.map(async gw => ({
+    ...gw, entryCount: (await db.getGiveawayEntries(gw.id)).length,
+  })));
+  res.json(withEntries);
+});
+
+app.post('/api/guilds/:guildId/giveaways', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { channelId, prize, durationMins, winners } = req.body ?? {};
+  if (!channelId || !prize || !durationMins) return res.status(400).json({ error: 'channelId, prize and durationMins are required.' });
+  const result = await actions.createGiveaway(req.params.guildId, channelId, prize, parseInt(durationMins, 10), parseInt(winners, 10) || 1, req.gzSession.id);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+});
+
+app.post('/api/guilds/:guildId/giveaways/:id/end', requireAuth, requireGuildAdmin, async (req, res) => {
+  const ok = await actions.endGiveaway(parseInt(req.params.id, 10));
+  res.json({ ok });
+});
+
+app.post('/api/guilds/:guildId/giveaways/:id/reroll', requireAuth, requireGuildAdmin, async (req, res) => {
+  const result = await actions.rerollGiveaway(parseInt(req.params.id, 10));
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+});
+
+// ─── API: player stats ───────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/stats/top', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getTopPlayerStats(req.params.guildId, 25));
+});
+
+app.get('/api/guilds/:guildId/stats/:userId', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { stats, analysis } = await actions.getOrRefreshStyleAnalysis(req.params.guildId, req.params.userId);
+  if (!stats) return res.status(404).json({ error: 'No data for that user yet.' });
+  res.json({ stats, analysis });
+});
+
+// ─── Public status page (unauthenticated) ─────────────────────────────────────
+
+app.get('/status', (req, res) => {
+  const online  = botClient?.isReady() ?? false;
+  res.json({
+    online,
+    ping:    online ? botClient.ws.ping : null,
+    uptime:  formatUptime(Date.now() - startTime),
+    guilds:  online ? botClient.guilds.cache.size : 0,
+    tag:     online ? botClient.user.tag : null,
+  });
+});
+
+app.get('/', (req, res) => {
   const online  = botClient?.isReady() ?? false;
   const uptime  = formatUptime(Date.now() - startTime);
   const ping    = online ? botClient.ws.ping : '—';
@@ -43,8 +421,8 @@ const server = http.createServer((req, res) => {
   const dot     = online ? '#22c55e' : '#ef4444';
   const status  = online ? 'Online' : 'Offline';
 
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(`<!DOCTYPE html>
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
@@ -224,15 +602,16 @@ const server = http.createServer((req, res) => {
 
     <div class="footer">
       Page refreshes every 30s &nbsp;·&nbsp;
-      <a href="/status">JSON status</a>
+      <a href="/status">JSON status</a> &nbsp;·&nbsp;
+      <a href="/dashboard/">Admin dashboard</a>
     </div>
   </div>
 </body>
 </html>`);
 });
 
-server.listen(PORT, () => {
-  console.log(`Status page running on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Status page + dashboard running on port ${PORT}`);
 });
 
 module.exports = { setBotClient };

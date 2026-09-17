@@ -9,12 +9,14 @@ A Discord bot built for DayZ console (Xbox) communities. Includes a loot finder 
 | File | Purpose |
 |---|---|
 | `index.js` | Main bot — this is what runs |
-| `server.js` | Status web page (auto-starts with the bot) |
+| `db.js` | Supabase data layer (shared by the bot and the dashboard) |
+| `actions.js` | Shared logic that needs the live Discord client (rules posting, giveaways, AI stats) |
+| `server.js` | Status page + admin dashboard (auto-starts with the bot) |
+| `public/dashboard/` | Dashboard frontend (HTML/CSS/JS) |
 | `package.json` | Node.js dependencies |
 | `livonia_map.jpg` | Livonia map image used for loot heatmaps |
 | `loot_items.json` | Parsed loot table from `types.xml` |
 | `loot_buildings.json` | Building positions from `mapgrouppos.xml` |
-| `config.json` | Auto-generated at runtime — stores all settings |
 
 ---
 
@@ -183,13 +185,43 @@ Page auto-refreshes every 30 seconds.
 
 ---
 
+## 🖥️ Admin Dashboard
+
+A web control panel lives at `https://your-bot.onrender.com/dashboard/`. Anyone can open the link, but it only shows servers where **both** are true:
+- GroundZeroAI is in the server, and
+- the logged-in Discord account has **Administrator** there.
+
+It covers server join info, log/rules/welcome/reports/honeypot channels, auto-role, target role, rules (add/remove/post), the trash talk toggle, scheduled messages, and giveaways (create/end/reroll), plus a player-stats lookup. Moderation (`/kick /ban /mute /warn`) stays as slash commands on purpose — those need to happen in the moment.
+
+### One-time setup
+
+1. In the [Discord Developer Portal](https://discord.com/developers/applications) → your app → **OAuth2 → General**, add a redirect URL:
+   ```
+   https://your-bot.onrender.com/auth/discord/callback
+   ```
+2. On the same page, copy the **Client Secret** (click "Reset Secret" if you've never generated one).
+3. Add two more environment variables in Render's **Environment** tab:
+
+| Key | Value |
+|---|---|
+| `DISCORD_CLIENT_SECRET` | the Client Secret from step 2 |
+| `SESSION_SECRET` | any long random string (e.g. run `openssl rand -hex 32`, or mash the keyboard) |
+
+4. Redeploy, then open `https://your-bot.onrender.com/dashboard/` and log in with Discord.
+
+If your Render URL ever changes, update the redirect URL in the Developer Portal to match — otherwise login will fail with a redirect mismatch error.
+
+---
+
 ## 🔒 Secrets
 
-Only two env vars needed — set in Render's Environment tab:
+Env vars, set in Render's Environment tab:
 
 ```
 DISCORD_TOKEN=your_bot_token
 CLIENT_ID=your_application_id
+DISCORD_CLIENT_SECRET=your_oauth_client_secret   (dashboard login)
+SESSION_SECRET=any_long_random_string            (dashboard login)
 ```
 
 Never commit these to GitHub. Keep your repo **Private**.
