@@ -395,6 +395,68 @@ app.put('/api/guilds/:guildId/economy/minigames', requireAuth, requireGuildAdmin
   res.json({ ok: true });
 });
 
+// ─── API: factions & zones ────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/factions', requireAuth, requireGuildAdmin, async (req, res) => {
+  const factions = await db.listFactions(req.params.guildId);
+  const withCounts = await Promise.all(factions.map(async f => ({
+    ...f, memberCount: (await db.getFactionMembers(req.params.guildId, f.id)).length,
+  })));
+  res.json(withCounts);
+});
+
+app.post('/api/guilds/:guildId/factions', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { name, channelId } = req.body ?? {};
+  if (!name) return res.status(400).json({ error: 'name is required.' });
+  const result = await actions.createFactionChecked(req.params.guildId, name, channelId || null);
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+});
+
+app.delete('/api/guilds/:guildId/factions/:id', requireAuth, requireGuildAdmin, async (req, res) => {
+  await db.deleteFaction(req.params.guildId, parseInt(req.params.id, 10));
+  res.json({ ok: true });
+});
+
+app.get('/api/guilds/:guildId/factions/:id/members', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getFactionMembers(req.params.guildId, parseInt(req.params.id, 10)));
+});
+
+app.post('/api/guilds/:guildId/factions/:id/members', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { userId } = req.body ?? {};
+  if (!userId) return res.status(400).json({ error: 'userId is required.' });
+  const existing = await db.getMemberFaction(req.params.guildId, userId);
+  if (existing) return res.status(400).json({ error: 'That user is already in a faction.' });
+  await db.addFactionMember(req.params.guildId, parseInt(req.params.id, 10), userId);
+  res.json({ ok: true });
+});
+
+app.delete('/api/guilds/:guildId/factions/members/:userId', requireAuth, requireGuildAdmin, async (req, res) => {
+  await db.removeFactionMember(req.params.guildId, req.params.userId);
+  res.json({ ok: true });
+});
+
+app.get('/api/guilds/:guildId/zones', requireAuth, requireGuildAdmin, async (req, res) => {
+  const factionId = req.query.factionId ? parseInt(req.query.factionId, 10) : null;
+  res.json(await db.listZones(req.params.guildId, factionId));
+});
+
+app.post('/api/guilds/:guildId/zones', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { factionName, name, centerX, centerZ, radius, allowlist } = req.body ?? {};
+  if (!factionName || !name) return res.status(400).json({ error: 'factionName and name are required.' });
+  const result = await actions.createZoneChecked(req.params.guildId, factionName, {
+    name, centerX: parseFloat(centerX), centerZ: parseFloat(centerZ), radius: parseFloat(radius),
+    allowlist: Array.isArray(allowlist) ? allowlist : [],
+  });
+  if (!result.ok) return res.status(400).json(result);
+  res.json(result);
+});
+
+app.delete('/api/guilds/:guildId/zones/:id', requireAuth, requireGuildAdmin, async (req, res) => {
+  await db.deleteZone(req.params.guildId, parseInt(req.params.id, 10));
+  res.json({ ok: true });
+});
+
 // ─── API: moderation actions ──────────────────────────────────────────────────
 
 app.post('/api/guilds/:guildId/moderation/purge', requireAuth, requireGuildAdmin, async (req, res) => {

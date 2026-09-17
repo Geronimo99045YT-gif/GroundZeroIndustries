@@ -830,6 +830,120 @@ async function removeLinkLookup(userId) {
   } catch (err) { alert(err.message); }
 }
 
+// ─── Factions & Zones ───────────────────────────────────────────────────────
+
+let FACTIONS = [];
+
+function channelNameById(id) {
+  const c = CHANNELS.find(c => c.id === id);
+  return c ? `#${escapeHtml(c.name)}` : null;
+}
+function factionOptions(valueKey) {
+  if (FACTIONS.length === 0) return `<option value="">— create a faction first —</option>`;
+  return FACTIONS.map(f => `<option value="${escapeHtml(String(f[valueKey]))}">${escapeHtml(f.name)}</option>`).join('');
+}
+
+async function loadFactions() {
+  FACTIONS = await api(`/api/guilds/${guildId}/factions`);
+  const el = document.getElementById('factionsList');
+  el.innerHTML = FACTIONS.length === 0 ? `<p class="muted">No factions yet.</p>` : FACTIONS.map(f => `
+    <div class="list-item">
+      <span><strong>${escapeHtml(f.name)}</strong> — ${f.memberCount} member${f.memberCount === 1 ? '' : 's'}${f.channel_id ? ` · alerts in ${channelNameById(f.channel_id) ?? 'unknown channel'}` : ' · no alert channel set'}</span>
+      <div class="actions"><button class="danger" data-id="${f.id}" onclick="deleteFaction(this.dataset.id)">Delete</button></div>
+    </div>
+  `).join('');
+
+  document.getElementById('addMemberForm').factionId.innerHTML = factionOptions('id');
+  document.getElementById('createZoneForm').factionName.innerHTML = factionOptions('name');
+}
+async function deleteFaction(id) {
+  try {
+    await api(`/api/guilds/${guildId}/factions/${id}`, { method: 'DELETE' });
+    loadFactions();
+    loadZones();
+  } catch (err) { alert(err.message); }
+}
+document.getElementById('createFactionForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    await api(`/api/guilds/${guildId}/factions`, {
+      method: 'POST',
+      body: { name: fd.get('name').trim(), channelId: fd.get('channelId') || null },
+    });
+    e.target.reset();
+    flash('factionsMsg', 'Faction created.');
+    loadFactions();
+  } catch (err) { flash('factionsMsg', err.message, 'error'); }
+});
+
+document.getElementById('addMemberForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const factionId = fd.get('factionId');
+  if (!factionId) { flash('membersMsg', 'Create a faction first.', 'error'); return; }
+  try {
+    await api(`/api/guilds/${guildId}/factions/${factionId}/members`, {
+      method: 'POST',
+      body: { userId: fd.get('userId').trim() },
+    });
+    e.target.reset();
+    flash('membersMsg', 'Member added.');
+    loadFactions();
+  } catch (err) { flash('membersMsg', err.message, 'error'); }
+});
+
+document.getElementById('removeMemberForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const userId = new FormData(e.target).get('userId').trim();
+  try {
+    await api(`/api/guilds/${guildId}/factions/members/${userId}`, { method: 'DELETE' });
+    e.target.reset();
+    flash('membersMsg', 'Member removed.');
+    loadFactions();
+  } catch (err) { flash('membersMsg', err.message, 'error'); }
+});
+
+async function loadZones() {
+  const zones = await api(`/api/guilds/${guildId}/zones`);
+  const el = document.getElementById('zonesList');
+  el.innerHTML = zones.length === 0 ? `<p class="muted">No zones yet.</p>` : zones.map(z => {
+    const faction = FACTIONS.find(f => f.id === z.faction_id);
+    const allow = Array.isArray(z.allowlist) ? z.allowlist : [];
+    return `
+    <div class="list-item">
+      <span><strong>${escapeHtml(z.name)}</strong> — ${faction ? escapeHtml(faction.name) : 'unknown faction'} · center (${z.center_x}, ${z.center_z}) · radius ${z.radius}m${allow.length ? ` · allowlist: ${escapeHtml(allow.join(', '))}` : ''}</span>
+      <div class="actions"><button class="danger" data-id="${z.id}" onclick="deleteZone(this.dataset.id)">Delete</button></div>
+    </div>
+  `; }).join('');
+}
+async function deleteZone(id) {
+  try {
+    await api(`/api/guilds/${guildId}/zones/${id}`, { method: 'DELETE' });
+    loadZones();
+  } catch (err) { alert(err.message); }
+}
+document.getElementById('createZoneForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const factionName = fd.get('factionName');
+  if (!factionName) { flash('zonesMsg', 'Create a faction first.', 'error'); return; }
+  const allowlist = (fd.get('allowlist') || '').split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    await api(`/api/guilds/${guildId}/zones`, {
+      method: 'POST',
+      body: {
+        factionName, name: fd.get('name').trim(),
+        centerX: fd.get('centerX'), centerZ: fd.get('centerZ'), radius: fd.get('radius'),
+        allowlist,
+      },
+    });
+    e.target.reset();
+    flash('zonesMsg', 'Zone created.');
+    loadZones();
+  } catch (err) { flash('zonesMsg', err.message, 'error'); }
+});
+
 // ─── Init ──────────────────────────────────────────────────────────────────
 
 (async function init() {
@@ -852,6 +966,7 @@ async function removeLinkLookup(userId) {
     document.getElementById('giveawayForm').channelId.innerHTML = channelOptions(null);
     document.getElementById('purgeForm').channelId.innerHTML = channelOptions(null);
     document.getElementById('modChannelSelect').innerHTML = channelOptions(null);
+    document.getElementById('createFactionForm').channelId.innerHTML = channelOptions(null);
 
     document.getElementById('loading').hidden = true;
     document.getElementById('app').hidden = false;
@@ -868,6 +983,7 @@ async function removeLinkLookup(userId) {
     loadMinigamesConfig();
     loadLeaderboard();
     loadTransactions();
+    loadFactions().then(loadZones);
   } catch (err) {
     if (err.status === 401) { window.location.href = 'index.html'; return; }
     document.getElementById('loading').hidden = true;

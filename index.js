@@ -1072,6 +1072,37 @@ const commands = [
     .setName('donate')
     .setDescription('Support the developer'),
 
+  // ── Factions & zones ──────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('faction')
+    .setDescription('Manage factions and their base zones')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand(sub => sub.setName('create').setDescription('Create a faction')
+      .addStringOption(o => o.setName('name').setDescription('Faction name').setRequired(true))
+      .addChannelOption(o => o.setName('channel').setDescription('Channel for zone alerts').addChannelTypes(ChannelType.GuildText).setRequired(true)))
+    .addSubcommand(sub => sub.setName('delete').setDescription('Delete a faction (also deletes its zones)')
+      .addStringOption(o => o.setName('name').setDescription('Faction name').setRequired(true)))
+    .addSubcommand(sub => sub.setName('addmember').setDescription('Add a member to a faction')
+      .addUserOption(o => o.setName('user').setDescription('User to add').setRequired(true))
+      .addStringOption(o => o.setName('faction').setDescription('Faction name').setRequired(true)))
+    .addSubcommand(sub => sub.setName('removemember').setDescription("Remove a user from their faction")
+      .addUserOption(o => o.setName('user').setDescription('User to remove').setRequired(true)))
+    .addSubcommand(sub => sub.setName('info').setDescription('Show a faction\'s channel and members')
+      .addStringOption(o => o.setName('name').setDescription('Faction name').setRequired(true)))
+    .addSubcommand(sub => sub.setName('list').setDescription('List all factions'))
+    .addSubcommand(sub => sub.setName('zone-create').setDescription('Create a base zone for a faction')
+      .addStringOption(o => o.setName('faction').setDescription('Faction name').setRequired(true))
+      .addStringOption(o => o.setName('name').setDescription('Zone name').setRequired(true))
+      .addNumberOption(o => o.setName('x').setDescription('Center X coordinate').setRequired(true))
+      .addNumberOption(o => o.setName('z').setDescription('Center Z coordinate').setRequired(true))
+      .addNumberOption(o => o.setName('radius').setDescription('Radius in meters').setRequired(true).setMinValue(1))
+      .addStringOption(o => o.setName('allowlist').setDescription('Comma-separated in-game names always allowed (besides faction members)')))
+    .addSubcommand(sub => sub.setName('zone-delete').setDescription('Delete a zone')
+      .addStringOption(o => o.setName('name').setDescription('Zone name').setRequired(true)))
+    .addSubcommand(sub => sub.setName('zone-list').setDescription('List zones')
+      .addStringOption(o => o.setName('faction').setDescription('Only show this faction\'s zones'))),
+
 ].map(c => c.toJSON());
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -2545,6 +2576,91 @@ React with 🎉 to enter!`)
     const payload = { embeds: [embed], components: [row] };
     if (fs.existsSync(logoPath)) payload.files = [new AttachmentBuilder(logoPath, { name: 'raptor-logo.png' })];
     await interaction.reply(payload);
+
+  // /faction
+  } else if (commandName === 'faction') {
+    const sub = interaction.options.getSubcommand();
+
+    if (sub === 'create') {
+      const name = interaction.options.getString('name').trim();
+      const channel = interaction.options.getChannel('channel');
+      const result = await actions.createFactionChecked(guild.id, name, channel.id);
+      await interaction.reply({ content: result.ok ? `✅ Faction **${name}** created, alerts go to ${channel}.` : `❌ ${result.error}`, ephemeral: true });
+
+    } else if (sub === 'delete') {
+      const name = interaction.options.getString('name').trim();
+      const faction = await db.getFactionByName(guild.id, name);
+      if (!faction) { await interaction.reply({ content: `❌ No faction named "${name}".`, ephemeral: true }); return; }
+      await db.deleteFaction(guild.id, faction.id);
+      await interaction.reply({ content: `🗑️ Faction **${name}** and its zones deleted.`, ephemeral: true });
+
+    } else if (sub === 'addmember') {
+      const target = interaction.options.getUser('user');
+      const factionName = interaction.options.getString('faction').trim();
+      const result = await actions.addFactionMemberChecked(guild.id, target.id, factionName);
+      await interaction.reply({ content: result.ok ? `✅ Added <@${target.id}> to **${factionName}**.` : `❌ ${result.error}`, ephemeral: true });
+
+    } else if (sub === 'removemember') {
+      const target = interaction.options.getUser('user');
+      await db.removeFactionMember(guild.id, target.id);
+      await interaction.reply({ content: `✅ Removed <@${target.id}> from their faction.`, ephemeral: true });
+
+    } else if (sub === 'info') {
+      const name = interaction.options.getString('name').trim();
+      const faction = await db.getFactionByName(guild.id, name);
+      if (!faction) { await interaction.reply({ content: `❌ No faction named "${name}".`, ephemeral: true }); return; }
+      const [members, zones] = await Promise.all([db.getFactionMembers(guild.id, faction.id), db.listZones(guild.id, faction.id)]);
+      const embed = new EmbedBuilder()
+        .setTitle(`🛡️ ${faction.name}`)
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'Alert Channel', value: faction.channel_id ? `<#${faction.channel_id}>` : 'Not set', inline: true },
+          { name: 'Members', value: members.length ? members.map(m => `<@${m.user_id}>`).join(', ') : 'None', inline: false },
+          { name: 'Zones', value: zones.length ? zones.map(z => z.name).join(', ') : 'None', inline: false },
+        );
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+
+    } else if (sub === 'list') {
+      const factions = await db.listFactions(guild.id);
+      await interaction.reply({
+        content: factions.length ? `🛡️ Factions: ${factions.map(f => `**${f.name}**`).join(', ')}` : 'No factions yet.',
+        ephemeral: true,
+      });
+
+    } else if (sub === 'zone-create') {
+      const factionName = interaction.options.getString('faction').trim();
+      const name = interaction.options.getString('name').trim();
+      const centerX = interaction.options.getNumber('x');
+      const centerZ = interaction.options.getNumber('z');
+      const radius = interaction.options.getNumber('radius');
+      const allowlistRaw = interaction.options.getString('allowlist');
+      const allowlist = allowlistRaw ? allowlistRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const result = await actions.createZoneChecked(guild.id, factionName, { name, centerX, centerZ, radius, allowlist });
+      await interaction.reply({ content: result.ok ? `✅ Zone **${name}** created for **${factionName}**.` : `❌ ${result.error}`, ephemeral: true });
+
+    } else if (sub === 'zone-delete') {
+      const name = interaction.options.getString('name').trim();
+      const zone = await db.getZoneByName(guild.id, name);
+      if (!zone) { await interaction.reply({ content: `❌ No zone named "${name}".`, ephemeral: true }); return; }
+      await db.deleteZone(guild.id, zone.id);
+      await interaction.reply({ content: `🗑️ Zone **${name}** deleted.`, ephemeral: true });
+
+    } else if (sub === 'zone-list') {
+      const factionName = interaction.options.getString('faction');
+      let factionId = null;
+      if (factionName) {
+        const faction = await db.getFactionByName(guild.id, factionName.trim());
+        if (!faction) { await interaction.reply({ content: `❌ No faction named "${factionName}".`, ephemeral: true }); return; }
+        factionId = faction.id;
+      }
+      const zones = await db.listZones(guild.id, factionId);
+      await interaction.reply({
+        content: zones.length
+          ? zones.map(z => `**${z.name}** — center (${z.center_x}, ${z.center_z}), radius ${z.radius}m${z.allowlist?.length ? `, allowlist: ${z.allowlist.join(', ')}` : ''}`).join('\n')
+          : 'No zones found.',
+        ephemeral: true,
+      });
+    }
   }
 });
 

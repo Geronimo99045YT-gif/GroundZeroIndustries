@@ -221,6 +221,26 @@ Players earn automatically for: DayZ kills, DayZ playtime (10-minute increments)
 
 ---
 
+### 🚩 Factions & Zones
+
+Requires FTP set up (see below). Zones watch the DayZ server's periodic `PlayerList` snapshot in the `.ADM` log — how often that snapshot is written controls how fast a zone alert can fire, on top of the usual 3-minute scan interval.
+
+| Command | Description |
+|---|---|
+| `/faction create [name] [channel]` | Create a faction with a channel for zone/intrusion alerts |
+| `/faction delete [name]` | Delete a faction and all of its zones |
+| `/faction addmember [user] [faction]` | Add a member — a user can only be in one faction at a time |
+| `/faction removemember [user]` | Remove a member from their faction |
+| `/faction info [name]` | Show a faction's alert channel and member list |
+| `/faction list` | List all factions |
+| `/faction zone-create [faction] [name] [x] [z] [radius] [allowlist?]` | Create a base zone — pings the faction's alert channel when someone not on the allowlist and not a faction member is detected inside |
+| `/faction zone-delete [name]` | Delete a zone |
+| `/faction zone-list [faction?]` | List zones, optionally filtered to one faction |
+
+Faction members with a linked in-game name (`/link`) are never pinged for stepping into their own faction's zone — only unrecognized names trigger an alert, and only once per new intrusion (it won't re-ping every scan while the same person stays inside). Everything above is also manageable from the dashboard's **Factions** tab.
+
+---
+
 ### 🎲 Utility
 
 | Command | Description |
@@ -250,7 +270,7 @@ A web control panel lives at `https://your-bot.onrender.com/dashboard/`. Anyone 
 
 It's split into two sections:
 
-- **Discord Management** — everything about the bot and community: channels/roles, rules, moderation (purge, slowmode/lock/unlock, softban/tempban, automod filters, warnings), trash talk, scheduled messages, giveaways, player stats, and the economy (settings, leaderboard, transactions, give/take money, link lookup).
+- **Discord Management** — everything about the bot and community: channels/roles, rules, moderation (purge, slowmode/lock/unlock, softban/tempban, automod filters, warnings), trash talk, scheduled messages, giveaways, player stats, the economy (settings, leaderboard, transactions, give/take money, link lookup), and factions & zones (create/delete factions and base zones, manage members).
 - **Server Management** — the actual DayZ game server, over FTP: server join info, a parsed activity log (connects, disconnects, kills — read from the `.ADM` admin log), a file browser for the server's FTP files (view and edit text files), and a ban list editor. Requires the `FTP_*` env vars below; without them this section shows a setup notice instead of erroring.
 
 Quick in-the-moment moderation actions (`/kick /ban /mute`) stay as slash commands on purpose.

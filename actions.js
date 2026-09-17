@@ -557,8 +557,77 @@ async function scanDayzActivity(guildId) {
     }
   }
 
+  const snapshots = dayzFtp.extractPlayerListSnapshots(text);
+  if (snapshots.length > 0) {
+    await checkZones(guildId, snapshots[snapshots.length - 1]);
+  }
+
   await db.setOpenSessions(guildId, openSessions);
   await db.setDayzScanState(guildId, latestLogPath, newOffset);
+}
+
+// ─── Faction zone alerts ────────────────────────────────────────────────────
+// Uses the periodic PlayerList snapshot (every online player's current
+// position) to detect who's inside each zone. Only alerts on *new* entries —
+// present_names is the previous poll's set, so someone lingering in a zone
+// doesn't re-trigger a ping every 3 minutes.
+
+async function checkZones(guildId, snapshot) {
+  if (!snapshot || snapshot.players.length === 0) return;
+  const zones = await db.listZones(guildId);
+  if (zones.length === 0) return;
+
+  for (const zone of zones) {
+    try {
+      const allowSet = new Set((zone.allowlist || []).map(n => n.toLowerCase()));
+      const members = await db.getFactionMembers(guildId, zone.faction_id);
+      const memberLinks = await Promise.all(members.map(m => db.getLinkByUser(guildId, m.user_id)));
+      const memberNameSet = new Set(memberLinks.filter(Boolean).map(l => l.ign.toLowerCase()));
+
+      const insideNow = snapshot.players.filter(
+        p => dayzFtp.distance2D(p.x, p.z, zone.center_x, zone.center_z) <= zone.radius
+      );
+      const intruders = insideNow
+        .filter(p => !allowSet.has(p.name.toLowerCase()) && !memberNameSet.has(p.name.toLowerCase()))
+        .map(p => p.name);
+
+      const previousSet = new Set((zone.present_names || []).map(n => n.toLowerCase()));
+      const newIntruders = intruders.filter(name => !previousSet.has(name.toLowerCase()));
+
+      if (newIntruders.length > 0) {
+        await alertFactionZone(guildId, zone, members, memberLinks, insideNow, newIntruders);
+      }
+      await db.setZonePresence(zone.id, intruders);
+    } catch (err) {
+      console.error(`checkZones failed for zone ${zone.id} —`, err.message);
+    }
+  }
+}
+
+async function alertFactionZone(guildId, zone, members, memberLinks, insideNow, intruderNames) {
+  const faction = await db.getFactionById(zone.faction_id);
+  if (!faction || !faction.channel_id) return;
+  const guild = client?.guilds.cache.get(guildId);
+  const channel = guild?.channels.cache.get(faction.channel_id);
+  if (!channel) return;
+
+  // Don't ping members who are themselves currently inside this zone.
+  const insideNames = new Set(insideNow.map(p => p.name.toLowerCase()));
+  const toPing = members
+    .filter((m, i) => {
+      const link = memberLinks[i];
+      return !(link && insideNames.has(link.ign.toLowerCase()));
+    })
+    .map(m => `<@${m.user_id}>`);
+
+  const embed = new EmbedBuilder()
+    .setTitle(`🚨 ${zone.name} — Unauthorized Entry`)
+    .setColor(0xED4245)
+    .setDescription(`**${intruderNames.join(', ')}** ${intruderNames.length > 1 ? 'are' : 'is'} inside **${zone.name}** and not on the allowlist.`)
+    .setFooter({ text: faction.name })
+    .setTimestamp();
+
+  await channel.send({ content: toPing.join(' ') || undefined, embeds: [embed] }).catch(err => console.error('Zone alert send failed —', err.message));
 }
 
 async function scanAllDayzActivity() {
@@ -823,6 +892,36 @@ async function robPlayer(guildId, robberId, targetId) {
   return { ok: true, success: false, penalty };
 }
 
+// ─── Factions & zones (management) ─────────────────────────────────────────────
+
+async function createFactionChecked(guildId, name, channelId) {
+  const existing = await db.getFactionByName(guildId, name);
+  if (existing) return { ok: false, error: `A faction named "${name}" already exists.` };
+  await db.createFaction(guildId, name, channelId);
+  return { ok: true };
+}
+
+async function addFactionMemberChecked(guildId, userId, factionName) {
+  const faction = await db.getFactionByName(guildId, factionName);
+  if (!faction) return { ok: false, error: `No faction named "${factionName}".` };
+  const existing = await db.getMemberFaction(guildId, userId);
+  if (existing) return { ok: false, error: 'That user is already in a faction — remove them first.' };
+  await db.addFactionMember(guildId, faction.id, userId);
+  return { ok: true, faction };
+}
+
+async function createZoneChecked(guildId, factionName, { name, centerX, centerZ, radius, allowlist }) {
+  const faction = await db.getFactionByName(guildId, factionName);
+  if (!faction) return { ok: false, error: `No faction named "${factionName}".` };
+  if (!Number.isFinite(centerX) || !Number.isFinite(centerZ) || !Number.isFinite(radius) || radius <= 0) {
+    return { ok: false, error: 'Center X/Z and radius must be valid numbers, radius > 0.' };
+  }
+  const existing = await db.getZoneByName(guildId, name);
+  if (existing) return { ok: false, error: `A zone named "${name}" already exists.` };
+  await db.createZone(guildId, faction.id, { name, centerX, centerZ, radius, allowlist: allowlist ?? [] });
+  return { ok: true, faction };
+}
+
 module.exports = {
   setClient,
   buildRulesEmbeds, postRulesToChannel,
@@ -840,4 +939,6 @@ module.exports = {
   playSlots,
   newDeck, handValue, formatHand, validateBlackjackBet, settleBlackjack,
   depositMoney, withdrawMoney, robPlayer,
+  checkZones,
+  createFactionChecked, addFactionMemberChecked, createZoneChecked,
 };

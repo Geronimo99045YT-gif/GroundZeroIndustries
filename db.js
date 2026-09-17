@@ -508,6 +508,89 @@ async function savePlayerStats(record) {
   return sbRequest('POST', '/rest/v1/player_stats', record);
 }
 
+// ─── Factions ───────────────────────────────────────────────────────────────
+
+async function createFaction(guildId, name, channelId) {
+  return sbRequest('POST', '/rest/v1/factions', { guild_id: guildId, name, channel_id: channelId });
+}
+
+async function getFactionByName(guildId, name) {
+  const rows = await sbRequest('GET', `/rest/v1/factions?guild_id=eq.${guildId}&name=eq.${encodeURIComponent(name)}&limit=1`);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function getFactionById(id) {
+  const rows = await sbRequest('GET', `/rest/v1/factions?id=eq.${id}&limit=1`);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function listFactions(guildId) {
+  const rows = await sbRequest('GET', `/rest/v1/factions?guild_id=eq.${guildId}&order=name`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function deleteFaction(guildId, id) {
+  return sbRequest('DELETE', `/rest/v1/factions?guild_id=eq.${guildId}&id=eq.${id}`);
+}
+
+async function setFactionChannel(guildId, id, channelId) {
+  return sbRequest('PATCH', `/rest/v1/factions?guild_id=eq.${guildId}&id=eq.${id}`, { channel_id: channelId });
+}
+
+// ─── Faction members ────────────────────────────────────────────────────────
+
+async function addFactionMember(guildId, factionId, userId, role = 'member') {
+  return sbRequest('POST', '/rest/v1/faction_members', { guild_id: guildId, faction_id: factionId, user_id: userId, role });
+}
+
+async function removeFactionMember(guildId, userId) {
+  return sbRequest('DELETE', `/rest/v1/faction_members?guild_id=eq.${guildId}&user_id=eq.${userId}`);
+}
+
+async function getMemberFaction(guildId, userId) {
+  const rows = await sbRequest('GET', `/rest/v1/faction_members?guild_id=eq.${guildId}&user_id=eq.${userId}&limit=1`);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function getFactionMembers(guildId, factionId) {
+  const rows = await sbRequest('GET', `/rest/v1/faction_members?guild_id=eq.${guildId}&faction_id=eq.${factionId}`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// ─── Zones ──────────────────────────────────────────────────────────────────
+
+async function createZone(guildId, factionId, { name, centerX, centerZ, radius, allowlist = [] }) {
+  return sbRequest('POST', '/rest/v1/zones', {
+    guild_id: guildId, faction_id: factionId, name,
+    center_x: centerX, center_z: centerZ, radius, allowlist,
+  });
+}
+
+async function getZoneByName(guildId, name) {
+  const rows = await sbRequest('GET', `/rest/v1/zones?guild_id=eq.${guildId}&name=eq.${encodeURIComponent(name)}&limit=1`);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function listZones(guildId, factionId = null) {
+  const path = factionId
+    ? `/rest/v1/zones?guild_id=eq.${guildId}&faction_id=eq.${factionId}&order=name`
+    : `/rest/v1/zones?guild_id=eq.${guildId}&order=name`;
+  const rows = await sbRequest('GET', path);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function deleteZone(guildId, id) {
+  return sbRequest('DELETE', `/rest/v1/zones?guild_id=eq.${guildId}&id=eq.${id}`);
+}
+
+async function setZonePresence(id, presentNames) {
+  return sbRequest('PATCH', `/rest/v1/zones?id=eq.${id}`, { present_names: presentNames });
+}
+
+async function setZoneAllowlist(guildId, id, allowlist) {
+  return sbRequest('PATCH', `/rest/v1/zones?guild_id=eq.${guildId}&id=eq.${id}`, { allowlist });
+}
+
 module.exports = {
   SUPABASE_URL, SUPABASE_KEY,
   sbRequest,
@@ -539,6 +622,9 @@ module.exports = {
   getBalance, adjustBalance, getBankBalance, adjustBankBalance,
   recordTransaction, getTransactions, getLeaderboard,
   getRobConfig, setRobConfig,
+  createFaction, getFactionByName, getFactionById, listFactions, deleteFaction, setFactionChannel,
+  addFactionMember, removeFactionMember, getMemberFaction, getFactionMembers,
+  createZone, getZoneByName, listZones, deleteZone, setZonePresence, setZoneAllowlist,
   getLinkByUser, getLinkByIgn, createLink, removeLink,
   getWorkConfig, setWorkConfig, getRiskyConfig, setRiskyConfig, getGamblingConfig, setGamblingConfig,
   getCooldown, setCooldown,

@@ -145,6 +145,42 @@ function extractFatalKill(line) {
   return { victim: m[1], killer: m[2], weapon: m[3] || null, distance: m[4] || null };
 }
 
+// The server periodically logs a full snapshot of every online player's
+// current position as its own block:
+//   HH:MM:SS | ##### PlayerList log: N players
+//   HH:MM:SS | Player "Name" (id=... pos=<X, Z, Y>)
+//   ...
+//   HH:MM:SS | #####
+// Each line still carries its own timestamp prefix. pos=<> orders as
+// <X, Z, altitude> (confirmed against real coordinates — the third value is
+// far too small to be a horizontal map coordinate on a 12800x12800 map).
+function extractPlayerListSnapshots(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const stripTime = (l) => l.replace(/^\d{2}:\d{2}:\d{2}\s*\|\s*/, '');
+  const snapshots = [];
+  let i = 0;
+  while (i < lines.length) {
+    const startMatch = stripTime(lines[i]).match(/^#####\s*PlayerList log:\s*(\d+)\s*players?$/i);
+    if (!startMatch) { i++; continue; }
+    const players = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const inner = stripTime(lines[j]);
+      if (/^#####$/.test(inner)) { j++; break; }
+      const pm = inner.match(/Player "([^"]+)".*?pos=<([-\d.]+),\s*([-\d.]+),\s*([-\d.]+)>/);
+      if (pm) players.push({ name: pm[1], x: parseFloat(pm[2]), z: parseFloat(pm[3]), altitude: parseFloat(pm[4]) });
+      j++;
+    }
+    snapshots.push({ players });
+    i = j;
+  }
+  return snapshots;
+}
+
+function distance2D(x1, z1, x2, z2) {
+  return Math.sqrt((x1 - x2) ** 2 + (z1 - z2) ** 2);
+}
+
 function parseAdmLog(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const events = [];
@@ -172,4 +208,5 @@ module.exports = {
   listDir,
   readTextFull, readTextTail, readFrom, writeText, getFileSize,
   findLatestAdmLog, parseAdmLog, extractFatalKill,
+  extractPlayerListSnapshots, distance2D,
 };
