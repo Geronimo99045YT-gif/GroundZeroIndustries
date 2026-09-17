@@ -375,20 +375,22 @@ app.delete('/api/guilds/:guildId/economy/link/:userId', requireAuth, requireGuil
 });
 
 app.get('/api/guilds/:guildId/economy/minigames', requireAuth, requireGuildAdmin, async (req, res) => {
-  const [work, risky, gambling] = await Promise.all([
+  const [work, risky, gambling, rob] = await Promise.all([
     db.getWorkConfig(req.params.guildId),
     db.getRiskyConfig(req.params.guildId),
     db.getGamblingConfig(req.params.guildId),
+    db.getRobConfig(req.params.guildId),
   ]);
-  res.json({ work, risky, gambling });
+  res.json({ work, risky, gambling, rob });
 });
 
 app.put('/api/guilds/:guildId/economy/minigames', requireAuth, requireGuildAdmin, async (req, res) => {
-  const { work, risky, gambling } = req.body ?? {};
+  const { work, risky, gambling, rob } = req.body ?? {};
   const jobs = [];
   if (work) jobs.push(db.setWorkConfig(req.params.guildId, work));
   if (risky) jobs.push(db.setRiskyConfig(req.params.guildId, risky));
   if (gambling) jobs.push(db.setGamblingConfig(req.params.guildId, gambling));
+  if (rob) jobs.push(db.setRobConfig(req.params.guildId, rob));
   await Promise.all(jobs);
   res.json({ ok: true });
 });

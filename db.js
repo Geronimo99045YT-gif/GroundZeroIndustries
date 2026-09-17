@@ -401,6 +401,7 @@ async function setCooldown(guildId, userId, command) {
 }
 
 // ─── Economy (balances & transactions) ─────────────────────────────────────────
+// "balance" = cash (on-hand, robbable). "bank" = deposited, safe from /rob.
 
 async function getBalance(guildId, userId) {
   const rows = await sbRequest('GET', `/rest/v1/player_economy?guild_id=eq.${guildId}&user_id=eq.${userId}&limit=1`);
@@ -416,6 +417,18 @@ async function adjustBalance(guildId, userId, delta) {
   return next;
 }
 
+async function getBankBalance(guildId, userId) {
+  const rows = await sbRequest('GET', `/rest/v1/player_economy?guild_id=eq.${guildId}&user_id=eq.${userId}&limit=1`);
+  return Array.isArray(rows) && rows[0] ? rows[0].bank : 0;
+}
+
+async function adjustBankBalance(guildId, userId, delta) {
+  const current = await getBankBalance(guildId, userId);
+  const next = current + delta;
+  await sbRequest('POST', '/rest/v1/player_economy', { guild_id: guildId, user_id: userId, bank: next, updated_at: new Date().toISOString() });
+  return next;
+}
+
 async function recordTransaction(guildId, { fromUserId = null, toUserId, amount, type, reason = null }) {
   return sbRequest('POST', '/rest/v1/economy_transactions', { guild_id: guildId, from_user_id: fromUserId, to_user_id: toUserId, amount, type, reason });
 }
@@ -425,9 +438,38 @@ async function getTransactions(guildId, limit = 50) {
   return Array.isArray(rows) ? rows : [];
 }
 
+// Ranked by total (cash + bank). Fetched in full and sorted in JS since
+// PostgREST can't easily order by a computed sum, and guild player counts
+// here are small enough that this is cheap.
 async function getLeaderboard(guildId, limit = 10) {
-  const rows = await sbRequest('GET', `/rest/v1/player_economy?guild_id=eq.${guildId}&order=balance.desc&limit=${limit}`);
-  return Array.isArray(rows) ? rows : [];
+  const rows = await sbRequest('GET', `/rest/v1/player_economy?guild_id=eq.${guildId}&select=user_id,balance,bank`);
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map(r => ({ user_id: r.user_id, cash: r.balance ?? 0, bank: r.bank ?? 0, total: (r.balance ?? 0) + (r.bank ?? 0) }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
+}
+
+async function getRobConfig(guildId) {
+  const c = await getGuildConfig(guildId);
+  return {
+    cooldownSec: c.economy_rob_cooldown_sec ?? 1800,
+    successChance: c.economy_rob_success_chance ?? 0.5,
+    minPercent: c.economy_rob_min_percent ?? 0.1,
+    maxPercent: c.economy_rob_max_percent ?? 0.4,
+    failPenaltyPercent: c.economy_rob_fail_penalty_percent ?? 0.2,
+    minTargetCash: c.economy_rob_min_target_cash ?? 20,
+  };
+}
+async function setRobConfig(guildId, updates) {
+  const map = {
+    cooldownSec: 'economy_rob_cooldown_sec', successChance: 'economy_rob_success_chance',
+    minPercent: 'economy_rob_min_percent', maxPercent: 'economy_rob_max_percent',
+    failPenaltyPercent: 'economy_rob_fail_penalty_percent', minTargetCash: 'economy_rob_min_target_cash',
+  };
+  const patch = {};
+  for (const [key, col] of Object.entries(map)) if (key in updates) patch[col] = updates[key];
+  await saveGuildConfig(guildId, patch);
 }
 
 // ─── Player links (Discord <-> in-game name) ───────────────────────────────────
@@ -494,7 +536,9 @@ module.exports = {
   getKillfeedChannel, setKillfeedChannel,
   getDayzScanState, setDayzScanState,
   getOpenSessions, setOpenSessions,
-  getBalance, adjustBalance, recordTransaction, getTransactions, getLeaderboard,
+  getBalance, adjustBalance, getBankBalance, adjustBankBalance,
+  recordTransaction, getTransactions, getLeaderboard,
+  getRobConfig, setRobConfig,
   getLinkByUser, getLinkByIgn, createLink, removeLink,
   getWorkConfig, setWorkConfig, getRiskyConfig, setRiskyConfig, getGamblingConfig, setGamblingConfig,
   getCooldown, setCooldown,

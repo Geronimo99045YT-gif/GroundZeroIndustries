@@ -768,6 +768,61 @@ async function settleBlackjack(guildId, userId, bet, outcome) {
   return payout;
 }
 
+// ─── Cash / Bank (deposit, withdraw, rob) ──────────────────────────────────────
+
+async function depositMoney(guildId, userId, amount) {
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: 'Amount must be a positive number.' };
+  const cash = await db.getBalance(guildId, userId);
+  if (cash < amount) return { ok: false, error: `You only have ${cash.toLocaleString()} cash.` };
+  await db.adjustBalance(guildId, userId, -amount);
+  const newBank = await db.adjustBankBalance(guildId, userId, amount);
+  await db.recordTransaction(guildId, { toUserId: userId, amount, type: 'deposit' });
+  return { ok: true, newBank };
+}
+
+async function withdrawMoney(guildId, userId, amount) {
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: 'Amount must be a positive number.' };
+  const bank = await db.getBankBalance(guildId, userId);
+  if (bank < amount) return { ok: false, error: `You only have ${bank.toLocaleString()} in the bank.` };
+  await db.adjustBankBalance(guildId, userId, -amount);
+  const newCash = await db.adjustBalance(guildId, userId, amount);
+  await db.recordTransaction(guildId, { toUserId: userId, amount, type: 'withdraw' });
+  return { ok: true, newCash };
+}
+
+async function robPlayer(guildId, robberId, targetId) {
+  if (robberId === targetId) return { ok: false, error: "You can't rob yourself." };
+
+  const cfg = await db.getRobConfig(guildId);
+  const cd = await checkCooldown(guildId, robberId, 'rob', cfg.cooldownSec);
+  if (!cd.ready) return { ok: false, remainingSec: cd.remainingSec };
+
+  const targetCash = await db.getBalance(guildId, targetId);
+  if (targetCash < cfg.minTargetCash) {
+    return { ok: false, error: `They don't have enough cash on hand to rob (need at least ${cfg.minTargetCash.toLocaleString()} — money in the bank is safe).` };
+  }
+
+  await db.setCooldown(guildId, robberId, 'rob');
+  const success = Math.random() < cfg.successChance;
+
+  if (success) {
+    const pct = cfg.minPercent + Math.random() * (cfg.maxPercent - cfg.minPercent);
+    const amount = Math.max(1, Math.floor(targetCash * pct));
+    await db.adjustBalance(guildId, targetId, -amount);
+    await db.adjustBalance(guildId, robberId, amount);
+    await db.recordTransaction(guildId, { fromUserId: targetId, toUserId: robberId, amount, type: 'rob_success' });
+    return { ok: true, success: true, amount };
+  }
+
+  const robberCash = await db.getBalance(guildId, robberId);
+  const penalty = Math.min(robberCash, Math.floor(robberCash * cfg.failPenaltyPercent));
+  if (penalty > 0) {
+    await db.adjustBalance(guildId, robberId, -penalty);
+    await db.recordTransaction(guildId, { toUserId: robberId, amount: -penalty, type: 'rob_fail' });
+  }
+  return { ok: true, success: false, penalty };
+}
+
 module.exports = {
   setClient,
   buildRulesEmbeds, postRulesToChannel,
@@ -784,4 +839,5 @@ module.exports = {
   doWork, doRisky,
   playSlots,
   newDeck, handValue, formatHand, validateBlackjackBet, settleBlackjack,
+  depositMoney, withdrawMoney, robPlayer,
 };

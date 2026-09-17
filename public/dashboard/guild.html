@@ -407,6 +407,16 @@
             <div class="field"><label>Blackjack Min Bet</label><input name="gambling_blackjackMinBet" type="number" min="1" required></div>
             <div class="field"><label>Blackjack Max Bet</label><input name="gambling_blackjackMaxBet" type="number" min="1" required></div>
           </div>
+          <div class="section-title">/rob</div>
+          <p class="muted" style="margin-bottom:10px">Steals from a target's cash on hand — money they've deposited to the bank is always safe.</p>
+          <div class="grid cols-3">
+            <div class="field"><label>Cooldown (seconds)</label><input name="rob_cooldownSec" type="number" min="1" required></div>
+            <div class="field"><label>Success Chance (0-1)</label><input name="rob_successChance" type="number" min="0" max="1" step="0.05" required></div>
+            <div class="field"><label>Min Target Cash</label><input name="rob_minTargetCash" type="number" min="0" required></div>
+            <div class="field"><label>Min Steal %  (0-1)</label><input name="rob_minPercent" type="number" min="0" max="1" step="0.05" required></div>
+            <div class="field"><label>Max Steal % (0-1)</label><input name="rob_maxPercent" type="number" min="0" max="1" step="0.05" required></div>
+            <div class="field"><label>Fail Penalty % of Own Cash (0-1)</label><input name="rob_failPenaltyPercent" type="number" min="0" max="1" step="0.05" required></div>
+          </div>
           <button class="primary" type="submit">Save</button>
         </form>
       </div>

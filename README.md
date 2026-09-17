@@ -200,15 +200,20 @@ Requires FTP set up (see below) — earnings are pulled from the real `.ADM` ser
 | `/link [name]` | Link your Discord to your in-game name — verified by checking recent server logs for that name actually connecting |
 | `/unlink` | Remove your link |
 | `/linked [user?]` | Check a user's linked in-game name |
-| `/balance [user?]` | Check a balance |
-| `/pay [user] [amount]` | Pay another player |
-| `/addmoney` / `/removemoney` | Admin: give or take money, with a reason |
+| `/balance [user?]` | Check cash, bank, and total |
+| `/pay [user] [amount]` | Pay another player (from your cash) |
+| `/deposit [amount]` | Move cash into your bank — safe from `/rob` |
+| `/withdraw [amount]` | Move money from your bank back to cash |
+| `/rob [user]` | Try to steal from another player's cash on hand — can fail and cost you a cut of your own cash (cooldown) |
+| `/addmoney` / `/removemoney` | Admin: give or take cash, with a reason |
 | `/setkillfeedchannel` / `/killfeedchannel` | Set or view where DayZ kills get posted |
 | `/work` | Earn a small guaranteed payout — has a cooldown |
 | `/crime` | Risk it for a bigger payout — can fail and cost you instead (cooldown) |
 | `/slut` | Same as /crime with different flavor text (cooldown) |
 | `/slots [bet]` | Spin the slot machine |
 | `/blackjack [bet]` | Play a full hand of blackjack against the dealer (Hit/Stand buttons) |
+
+Every earning source (kills, playtime, chat, work, crime, slut, slots, blackjack) pays out to **cash**, which is what `/rob` can steal — depositing to the bank is the only way to protect it.
 
 Players earn automatically for: DayZ kills, DayZ playtime (10-minute increments), and Discord chat activity (rate-limited) — plus the commands above for active/manual earning and gambling. All reward amounts, odds, cooldowns, bet limits, the currency name, and the killfeed channel are configurable in the dashboard's **Economy** tab, which also shows a leaderboard, transaction history, and a give/take-money tool.
 

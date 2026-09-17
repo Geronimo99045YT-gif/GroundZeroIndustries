@@ -717,7 +717,7 @@ document.getElementById('economyConfigForm').addEventListener('submit', async e 
 });
 
 async function loadMinigamesConfig() {
-  const { work, risky, gambling } = await api(`/api/guilds/${guildId}/economy/minigames`);
+  const { work, risky, gambling, rob } = await api(`/api/guilds/${guildId}/economy/minigames`);
   const f = document.getElementById('minigamesForm');
   f.work_cooldownSec.value = work.cooldownSec;
   f.work_min.value = work.min;
@@ -732,6 +732,12 @@ async function loadMinigamesConfig() {
   f.gambling_slotsMaxBet.value = gambling.slotsMaxBet;
   f.gambling_blackjackMinBet.value = gambling.blackjackMinBet;
   f.gambling_blackjackMaxBet.value = gambling.blackjackMaxBet;
+  f.rob_cooldownSec.value = rob.cooldownSec;
+  f.rob_successChance.value = rob.successChance;
+  f.rob_minTargetCash.value = rob.minTargetCash;
+  f.rob_minPercent.value = rob.minPercent;
+  f.rob_maxPercent.value = rob.maxPercent;
+  f.rob_failPenaltyPercent.value = rob.failPenaltyPercent;
 }
 document.getElementById('minigamesForm').addEventListener('submit', async e => {
   e.preventDefault();
@@ -749,6 +755,10 @@ document.getElementById('minigamesForm').addEventListener('submit', async e => {
         gambling: {
           slotsMinBet: num('gambling_slotsMinBet'), slotsMaxBet: num('gambling_slotsMaxBet'),
           blackjackMinBet: num('gambling_blackjackMinBet'), blackjackMaxBet: num('gambling_blackjackMaxBet'),
+        },
+        rob: {
+          cooldownSec: num('rob_cooldownSec'), successChance: num('rob_successChance'), minTargetCash: num('rob_minTargetCash'),
+          minPercent: num('rob_minPercent'), maxPercent: num('rob_maxPercent'), failPenaltyPercent: num('rob_failPenaltyPercent'),
         },
       },
     });
@@ -778,7 +788,7 @@ async function loadLeaderboard() {
   el.innerHTML = list.map((row, i) => `
     <div class="list-item">
       <span>#${i + 1} — ${escapeHtml(row.user_id)}</span>
-      <span class="meta">${row.balance.toLocaleString()}</span>
+      <span class="meta">${row.total.toLocaleString()} total (${row.cash.toLocaleString()} cash / ${row.bank.toLocaleString()} bank)</span>
     </div>
   `).join('');
 }

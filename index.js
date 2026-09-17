@@ -1053,6 +1053,21 @@ const commands = [
     .setDescription('Play blackjack against the dealer')
     .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
 
+  new SlashCommandBuilder()
+    .setName('deposit')
+    .setDescription('Move cash into your bank (safe from /rob)')
+    .addIntegerOption(o => o.setName('amount').setDescription('Amount to deposit').setRequired(true).setMinValue(1)),
+
+  new SlashCommandBuilder()
+    .setName('withdraw')
+    .setDescription('Move money from your bank back to cash')
+    .addIntegerOption(o => o.setName('amount').setDescription('Amount to withdraw').setRequired(true).setMinValue(1)),
+
+  new SlashCommandBuilder()
+    .setName('rob')
+    .setDescription("Try to steal from another player's cash on hand (has a cooldown)")
+    .addUserOption(o => o.setName('user').setDescription('Who to rob').setRequired(true)),
+
 ].map(c => c.toJSON());
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -2345,11 +2360,18 @@ React with 🎉 to enter!`)
   // /balance
   } else if (commandName === 'balance') {
     const target = interaction.options.getUser('user') ?? user;
-    const [bal, econCfg] = await Promise.all([getBalance(guild.id, target.id), getEconomyConfig(guild.id)]);
-    await interaction.reply({
-      content: `💰 ${target.id === user.id ? 'You have' : `${target.username} has`} **${bal.toLocaleString()} ${econCfg.currencyName}**.`,
-      ephemeral: target.id === user.id,
-    });
+    const [cash, bank, econCfg] = await Promise.all([
+      getBalance(guild.id, target.id), db.getBankBalance(guild.id, target.id), getEconomyConfig(guild.id),
+    ]);
+    const embed = new EmbedBuilder()
+      .setTitle(`💰 ${target.username}'s Balance`)
+      .setColor(0x57F287)
+      .addFields(
+        { name: 'Cash', value: `${cash.toLocaleString()} ${econCfg.currencyName}`, inline: true },
+        { name: 'Bank', value: `${bank.toLocaleString()} ${econCfg.currencyName}`, inline: true },
+        { name: 'Total', value: `${(cash + bank).toLocaleString()} ${econCfg.currencyName}`, inline: true },
+      );
+    await interaction.reply({ embeds: [embed], ephemeral: target.id === user.id });
 
   // /pay
   } else if (commandName === 'pay') {
@@ -2472,6 +2494,36 @@ React with 🎉 to enter!`)
     const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
     blackjackGames.set(msg.id, { guildId: guild.id, userId: user.id, deck, playerHand, dealerHand, bet, resolved: false });
     setTimeout(() => resolveBlackjackTimeout(msg).catch(() => {}), 60_000);
+
+  // /deposit
+  } else if (commandName === 'deposit') {
+    const amount = interaction.options.getInteger('amount');
+    const result = await actions.depositMoney(guild.id, user.id, amount);
+    if (!result.ok) { await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true }); return; }
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply({ content: `🏦 Deposited **${amount.toLocaleString()} ${econCfg.currencyName}**. Bank balance: ${result.newBank.toLocaleString()}.`, ephemeral: true });
+
+  // /withdraw
+  } else if (commandName === 'withdraw') {
+    const amount = interaction.options.getInteger('amount');
+    const result = await actions.withdrawMoney(guild.id, user.id, amount);
+    if (!result.ok) { await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true }); return; }
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply({ content: `💵 Withdrew **${amount.toLocaleString()} ${econCfg.currencyName}**. Cash on hand: ${result.newCash.toLocaleString()}.`, ephemeral: true });
+
+  // /rob
+  } else if (commandName === 'rob') {
+    const target = interaction.options.getUser('user');
+    const result = await actions.robPlayer(guild.id, user.id, target.id);
+    if (!result.ok) {
+      const msg = result.remainingSec != null ? `⏳ You're on cooldown — try again in ${formatDuration(result.remainingSec)}.` : `❌ ${result.error}`;
+      await interaction.reply({ content: msg, ephemeral: true });
+      return;
+    }
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply(result.success
+      ? `🔪 You robbed <@${target.id}> and got away with **${result.amount.toLocaleString()} ${econCfg.currencyName}**!`
+      : `🚨 You tried to rob <@${target.id}> and got caught${result.penalty > 0 ? `, paying **${result.penalty.toLocaleString()} ${econCfg.currencyName}** in the process` : ''}.`);
   }
 });
 
