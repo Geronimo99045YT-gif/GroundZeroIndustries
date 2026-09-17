@@ -18,6 +18,15 @@ const FTP_PASS         = process.env.FTP_PASS         ?? null;
 const FTP_PORT         = parseInt(process.env.FTP_PORT ?? '21');
 const https            = require('https');
 
+// A bug in any single message/interaction handler must never take the whole
+// bot offline — log it and keep running instead of letting Node exit.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 const {
@@ -2356,7 +2365,7 @@ You are GroundZeroAI, a sharp-tongued Discord bot. Match the energy — calm get
           const parsed = JSON.parse(data);
           const text = parsed.choices?.[0]?.message?.content?.trim();
           if (!text) console.error(`Groq comeback: no text in response (status ${res.statusCode}) — ${data.slice(0, 300)}`);
-          resolve(text ?? getFallbackComeback(priorExchanges));
+          resolve(text || getFallbackComeback(priorExchanges));
         } catch (err) {
           console.error(`Groq comeback: failed to parse response (status ${res.statusCode}) — ${err.message} — ${data.slice(0, 300)}`);
           resolve(getFallbackComeback(priorExchanges));
@@ -2445,7 +2454,7 @@ async function generateChatReply(userMessage, channelId, username) {
           } else {
             console.error(`Groq chat: no text in response (status ${res.statusCode}) — ${data.slice(0, 300)}`);
           }
-          resolve(reply ?? `yeah ${username} 😂`);
+          resolve(reply || `yeah ${username} 😂`);
         } catch (err) {
           console.error(`Groq chat: failed to parse response (status ${res.statusCode}) — ${err.message} — ${data.slice(0, 300)}`);
           resolve(`fair enough ${username}`);
@@ -2463,11 +2472,11 @@ async function generateChatReply(userMessage, channelId, username) {
 
 async function fireComeback(message, guildId, exchanges, pool = null) {
   try { await message.channel.sendTyping(); } catch {}
-  const comeback = pool
+  const comeback = (pool
     ? getFallbackComeback(exchanges, pool)
-    : await generateComebackAI(message.content, exchanges);
+    : await generateComebackAI(message.content, exchanges)) || getFallbackComeback(exchanges);
   exchanges.push(`them: "${message.content.slice(0, 80)}" | us: "${comeback.slice(0, 80)}"`);
-  await message.reply(comeback);
+  try { await message.reply(comeback); } catch (err) { console.error('fireComeback: reply failed —', err.message); }
   return comeback;
 }
 
@@ -2642,7 +2651,7 @@ client.on('messageCreate', async message => {
     }
     try { await message.channel.sendTyping(); } catch {}
     const reply = await generateChatReply(cleanText, message.channel.id, message.author.displayName ?? message.author.username);
-    await message.reply(reply);
+    try { await message.reply(reply || 'yeah 😂'); } catch (err) { console.error('Chat reply failed —', err.message); }
     return;
   }
 
