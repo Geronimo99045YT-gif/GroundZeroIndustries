@@ -838,6 +838,10 @@ function channelNameById(id) {
   const c = CHANNELS.find(c => c.id === id);
   return c ? `#${escapeHtml(c.name)}` : null;
 }
+function roleNameById(id) {
+  const r = ROLES.find(r => r.id === id);
+  return r ? `@${escapeHtml(r.name)}` : null;
+}
 function factionOptions(valueKey) {
   if (FACTIONS.length === 0) return `<option value="">— create a faction first —</option>`;
   return FACTIONS.map(f => `<option value="${escapeHtml(String(f[valueKey]))}">${escapeHtml(f.name)}</option>`).join('');
@@ -910,9 +914,10 @@ async function loadZones() {
   el.innerHTML = zones.length === 0 ? `<p class="muted">No zones yet.</p>` : zones.map(z => {
     const faction = FACTIONS.find(f => f.id === z.faction_id);
     const allow = Array.isArray(z.allowlist) ? z.allowlist : [];
+    const roleName = z.allowlist_role_id ? roleNameById(z.allowlist_role_id) : null;
     return `
     <div class="list-item">
-      <span><strong>${escapeHtml(z.name)}</strong> — ${faction ? escapeHtml(faction.name) : 'unknown faction'} · center (${z.center_x}, ${z.center_z}) · radius ${z.radius}m${allow.length ? ` · allowlist: ${escapeHtml(allow.join(', '))}` : ''}</span>
+      <span><strong>${escapeHtml(z.name)}</strong> — ${faction ? escapeHtml(faction.name) : 'unknown faction'} · center (${z.center_x}, ${z.center_z}) · radius ${z.radius}m${allow.length ? ` · allowlist: ${escapeHtml(allow.join(', '))}` : ''}${roleName ? ` · role: ${roleName}` : ''}</span>
       <div class="actions"><button class="danger" data-id="${z.id}" onclick="deleteZone(this.dataset.id)">Delete</button></div>
     </div>
   `; }).join('');
@@ -935,7 +940,7 @@ document.getElementById('createZoneForm').addEventListener('submit', async e => 
       body: {
         factionName, name: fd.get('name').trim(),
         centerX: fd.get('centerX'), centerZ: fd.get('centerZ'), radius: fd.get('radius'),
-        allowlist,
+        allowlist, allowlistRoleId: fd.get('allowlistRoleId') || null,
       },
     });
     e.target.reset();
@@ -967,6 +972,7 @@ document.getElementById('createZoneForm').addEventListener('submit', async e => 
     document.getElementById('purgeForm').channelId.innerHTML = channelOptions(null);
     document.getElementById('modChannelSelect').innerHTML = channelOptions(null);
     document.getElementById('createFactionForm').channelId.innerHTML = channelOptions(null);
+    document.getElementById('createZoneForm').allowlistRoleId.innerHTML = roleOptions(null);
 
     document.getElementById('loading').hidden = true;
     document.getElementById('app').hidden = false;

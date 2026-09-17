@@ -1097,7 +1097,8 @@ const commands = [
       .addNumberOption(o => o.setName('x').setDescription('Center X coordinate').setRequired(true))
       .addNumberOption(o => o.setName('z').setDescription('Center Z coordinate').setRequired(true))
       .addNumberOption(o => o.setName('radius').setDescription('Radius in meters').setRequired(true).setMinValue(1))
-      .addStringOption(o => o.setName('allowlist').setDescription('Comma-separated in-game names always allowed (besides faction members)')))
+      .addStringOption(o => o.setName('allowlist').setDescription('Comma-separated in-game names always allowed (besides faction members)'))
+      .addRoleOption(o => o.setName('allowlist_role').setDescription('Discord role always allowed (besides faction members)')))
     .addSubcommand(sub => sub.setName('zone-delete').setDescription('Delete a zone')
       .addStringOption(o => o.setName('name').setDescription('Zone name').setRequired(true)))
     .addSubcommand(sub => sub.setName('zone-list').setDescription('List zones')
@@ -2635,7 +2636,8 @@ React with 🎉 to enter!`)
       const radius = interaction.options.getNumber('radius');
       const allowlistRaw = interaction.options.getString('allowlist');
       const allowlist = allowlistRaw ? allowlistRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
-      const result = await actions.createZoneChecked(guild.id, factionName, { name, centerX, centerZ, radius, allowlist });
+      const allowlistRoleId = interaction.options.getRole('allowlist_role')?.id ?? null;
+      const result = await actions.createZoneChecked(guild.id, factionName, { name, centerX, centerZ, radius, allowlist, allowlistRoleId });
       await interaction.reply({ content: result.ok ? `✅ Zone **${name}** created for **${factionName}**.` : `❌ ${result.error}`, ephemeral: true });
 
     } else if (sub === 'zone-delete') {
@@ -2656,7 +2658,7 @@ React with 🎉 to enter!`)
       const zones = await db.listZones(guild.id, factionId);
       await interaction.reply({
         content: zones.length
-          ? zones.map(z => `**${z.name}** — center (${z.center_x}, ${z.center_z}), radius ${z.radius}m${z.allowlist?.length ? `, allowlist: ${z.allowlist.join(', ')}` : ''}`).join('\n')
+          ? zones.map(z => `**${z.name}** — center (${z.center_x}, ${z.center_z}), radius ${z.radius}m${z.allowlist?.length ? `, allowlist: ${z.allowlist.join(', ')}` : ''}${z.allowlist_role_id ? `, role: <@&${z.allowlist_role_id}>` : ''}`).join('\n')
           : 'No zones found.',
         ephemeral: true,
       });

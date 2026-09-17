@@ -233,11 +233,11 @@ Requires FTP set up (see below). Zones watch the DayZ server's periodic `PlayerL
 | `/faction removemember [user]` | Remove a member from their faction |
 | `/faction info [name]` | Show a faction's alert channel and member list |
 | `/faction list` | List all factions |
-| `/faction zone-create [faction] [name] [x] [z] [radius] [allowlist?]` | Create a base zone — pings the faction's alert channel when someone not on the allowlist and not a faction member is detected inside |
+| `/faction zone-create [faction] [name] [x] [z] [radius] [allowlist?] [allowlist_role?]` | Create a base zone — pings the faction's alert channel when someone not on the allowlist, not holding the allowlist role, and not a faction member is detected inside |
 | `/faction zone-delete [name]` | Delete a zone |
 | `/faction zone-list [faction?]` | List zones, optionally filtered to one faction |
 
-Faction members with a linked in-game name (`/link`) are never pinged for stepping into their own faction's zone — only unrecognized names trigger an alert, and only once per new intrusion (it won't re-ping every scan while the same person stays inside). Everything above is also manageable from the dashboard's **Factions** tab.
+A zone's allowlist can be in-game names, a Discord role, or both — anyone holding the allowlist role is exempt as long as they've linked their in-game name (`/link`), same as a faction member. Only unrecognized names trigger an alert, and only once per new intrusion (it won't re-ping every scan while the same person stays inside). Everything above is also manageable from the dashboard's **Factions** tab.
 
 ---
 

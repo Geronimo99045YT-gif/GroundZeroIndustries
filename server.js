@@ -442,11 +442,11 @@ app.get('/api/guilds/:guildId/zones', requireAuth, requireGuildAdmin, async (req
 });
 
 app.post('/api/guilds/:guildId/zones', requireAuth, requireGuildAdmin, async (req, res) => {
-  const { factionName, name, centerX, centerZ, radius, allowlist } = req.body ?? {};
+  const { factionName, name, centerX, centerZ, radius, allowlist, allowlistRoleId } = req.body ?? {};
   if (!factionName || !name) return res.status(400).json({ error: 'factionName and name are required.' });
   const result = await actions.createZoneChecked(req.params.guildId, factionName, {
     name, centerX: parseFloat(centerX), centerZ: parseFloat(centerZ), radius: parseFloat(radius),
-    allowlist: Array.isArray(allowlist) ? allowlist : [],
+    allowlist: Array.isArray(allowlist) ? allowlist : [], allowlistRoleId: allowlistRoleId || null,
   });
   if (!result.ok) return res.status(400).json(result);
   res.json(result);

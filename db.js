@@ -559,10 +559,10 @@ async function getFactionMembers(guildId, factionId) {
 
 // ─── Zones ──────────────────────────────────────────────────────────────────
 
-async function createZone(guildId, factionId, { name, centerX, centerZ, radius, allowlist = [] }) {
+async function createZone(guildId, factionId, { name, centerX, centerZ, radius, allowlist = [], allowlistRoleId = null }) {
   return sbRequest('POST', '/rest/v1/zones', {
     guild_id: guildId, faction_id: factionId, name,
-    center_x: centerX, center_z: centerZ, radius, allowlist,
+    center_x: centerX, center_z: centerZ, radius, allowlist, allowlist_role_id: allowlistRoleId,
   });
 }
 

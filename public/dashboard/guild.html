@@ -484,7 +484,7 @@
 
       <div class="card">
         <h2>Zones</h2>
-        <p class="muted" style="margin-bottom:10px">A zone pings its faction's alert channel when someone not on the allowlist (and not a faction member) is detected inside, based on the server's periodic player-position log. Faction members already at the zone themselves aren't pinged.</p>
+        <p class="muted" style="margin-bottom:10px">A zone pings its faction's alert channel when someone not on the allowlist, not holding the allowlist role, and not a faction member is detected inside, based on the server's periodic player-position log. Faction members already at the zone themselves aren't pinged.</p>
         <div id="zonesMsg" class="msg hidden"></div>
         <div id="zonesList"></div>
         <div class="section-title">Create a zone</div>
@@ -496,6 +496,7 @@
             <div class="field"><label>Center Z</label><input name="centerZ" type="number" step="0.1" required></div>
             <div class="field"><label>Radius (meters)</label><input name="radius" type="number" min="1" required></div>
             <div class="field"><label>Allowlist (comma-separated in-game names)</label><input name="allowlist"></div>
+            <div class="field"><label>Allowlist Role</label><select name="allowlistRoleId"></select></div>
           </div>
           <button class="primary" type="submit">Create Zone</button>
         </form>

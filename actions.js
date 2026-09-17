@@ -572,14 +572,30 @@ async function scanDayzActivity(guildId) {
 // present_names is the previous poll's set, so someone lingering in a zone
 // doesn't re-trigger a ping every 3 minutes.
 
+// Names of guild members holding a zone's allowlist role, resolved to their
+// linked in-game name. Relies on the GuildMembers intent keeping the role's
+// member cache populated — no explicit fetch needed.
+function getRoleAllowedNames(guildId, roleId) {
+  if (!roleId || !client) return [];
+  const role = client.guilds.cache.get(guildId)?.roles.cache.get(roleId);
+  if (!role) return [];
+  const userIds = [...role.members.keys()];
+  return Promise.all(userIds.map(id => db.getLinkByUser(guildId, id)))
+    .then(links => links.filter(Boolean).map(l => l.ign.toLowerCase()));
+}
+
 async function checkZones(guildId, snapshot) {
-  if (!snapshot || snapshot.players.length === 0) return;
+  // Note: don't bail out just because players.length === 0 — an empty
+  // snapshot (server briefly empty) must still clear zone presence below,
+  // otherwise a stale "already seen" name suppresses a real future intrusion.
+  if (!snapshot) return;
   const zones = await db.listZones(guildId);
   if (zones.length === 0) return;
 
   for (const zone of zones) {
     try {
-      const allowSet = new Set((zone.allowlist || []).map(n => n.toLowerCase()));
+      const roleAllowedNames = await getRoleAllowedNames(guildId, zone.allowlist_role_id);
+      const allowSet = new Set([...(zone.allowlist || []).map(n => n.toLowerCase()), ...roleAllowedNames]);
       const members = await db.getFactionMembers(guildId, zone.faction_id);
       const memberLinks = await Promise.all(members.map(m => db.getLinkByUser(guildId, m.user_id)));
       const memberNameSet = new Set(memberLinks.filter(Boolean).map(l => l.ign.toLowerCase()));
@@ -910,7 +926,7 @@ async function addFactionMemberChecked(guildId, userId, factionName) {
   return { ok: true, faction };
 }
 
-async function createZoneChecked(guildId, factionName, { name, centerX, centerZ, radius, allowlist }) {
+async function createZoneChecked(guildId, factionName, { name, centerX, centerZ, radius, allowlist, allowlistRoleId }) {
   const faction = await db.getFactionByName(guildId, factionName);
   if (!faction) return { ok: false, error: `No faction named "${factionName}".` };
   if (!Number.isFinite(centerX) || !Number.isFinite(centerZ) || !Number.isFinite(radius) || radius <= 0) {
@@ -918,7 +934,7 @@ async function createZoneChecked(guildId, factionName, { name, centerX, centerZ,
   }
   const existing = await db.getZoneByName(guildId, name);
   if (existing) return { ok: false, error: `A zone named "${name}" already exists.` };
-  await db.createZone(guildId, faction.id, { name, centerX, centerZ, radius, allowlist: allowlist ?? [] });
+  await db.createZone(guildId, faction.id, { name, centerX, centerZ, radius, allowlist: allowlist ?? [], allowlistRoleId: allowlistRoleId ?? null });
   return { ok: true, faction };
 }
 
