@@ -296,11 +296,14 @@ Return this exact JSON structure:
           const clean = text?.replace(/```json|```/g, '').trim();
           const parsed = JSON.parse(clean);
           resolve(parsed);
-        } catch { resolve(null); }
+        } catch (err) {
+          console.error(`Groq style analysis: failed (status ${res.statusCode}) — ${err.message} — ${data.slice(0, 300)}`);
+          resolve(null);
+        }
       });
     });
-    req.on('error', () => resolve(null));
-    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
+    req.on('error', (err) => { console.error(`Groq style analysis: request error — ${err.message}`); resolve(null); });
+    req.setTimeout(8000, () => { req.destroy(); console.error('Groq style analysis: request timed out after 8s'); resolve(null); });
     req.write(body);
     req.end();
   });

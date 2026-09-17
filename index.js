@@ -2355,14 +2355,16 @@ You are GroundZeroAI, a sharp-tongued Discord bot. Match the energy — calm get
         try {
           const parsed = JSON.parse(data);
           const text = parsed.choices?.[0]?.message?.content?.trim();
+          if (!text) console.error(`Groq comeback: no text in response (status ${res.statusCode}) — ${data.slice(0, 300)}`);
           resolve(text ?? getFallbackComeback(priorExchanges));
-        } catch {
+        } catch (err) {
+          console.error(`Groq comeback: failed to parse response (status ${res.statusCode}) — ${err.message} — ${data.slice(0, 300)}`);
           resolve(getFallbackComeback(priorExchanges));
         }
       });
     });
-    req.on('error', () => resolve(getFallbackComeback(priorExchanges)));
-    req.setTimeout(8000, () => { req.destroy(); resolve(getFallbackComeback(priorExchanges)); });
+    req.on('error', (err) => { console.error(`Groq comeback: request error — ${err.message}`); resolve(getFallbackComeback(priorExchanges)); });
+    req.setTimeout(8000, () => { req.destroy(); console.error('Groq comeback: request timed out after 8s'); resolve(getFallbackComeback(priorExchanges)); });
     req.write(body);
     req.end();
   });
@@ -2440,15 +2442,18 @@ async function generateChatReply(userMessage, channelId, username) {
           if (reply) {
             addToHistory(channelId, 'user', userMessage);
             addToHistory(channelId, 'assistant', reply);
+          } else {
+            console.error(`Groq chat: no text in response (status ${res.statusCode}) — ${data.slice(0, 300)}`);
           }
           resolve(reply ?? `yeah ${username} 😂`);
-        } catch {
+        } catch (err) {
+          console.error(`Groq chat: failed to parse response (status ${res.statusCode}) — ${err.message} — ${data.slice(0, 300)}`);
           resolve(`fair enough ${username}`);
         }
       });
     });
-    req.on('error', () => resolve(`say again ${username}?`));
-    req.setTimeout(8000, () => { req.destroy(); resolve(`took too long to think ${username} 😂`); });
+    req.on('error', (err) => { console.error(`Groq chat: request error — ${err.message}`); resolve(`say again ${username}?`); });
+    req.setTimeout(8000, () => { req.destroy(); console.error('Groq chat: request timed out after 8s'); resolve(`took too long to think ${username} 😂`); });
     req.write(body);
     req.end();
   });
