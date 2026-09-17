@@ -136,6 +136,10 @@ label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-
 .msg.hidden { display: none; }
 
 .muted { color: var(--muted); font-size: 13px; }
+
+.dash-credit { margin-top: 32px; padding-top: 18px; border-top: 1px solid var(--border); text-align: center; }
+.dash-credit img { max-width: 140px; height: auto; display: block; margin: 0 auto 10px; opacity: .9; }
+.dash-credit a.btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; }
 .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 18px 0 8px; }
 .checkbox-row { display: flex; align-items: center; gap: 8px; }
 .checkbox-row input { width: auto; }

@@ -809,6 +809,26 @@ app.get('/', (req, res) => {
       color: #484f58;
     }
 
+    .credit {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid #30363d;
+    }
+    .credit img { max-width: 160px; height: auto; display: block; margin: 0 auto 10px; }
+    .credit a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #e6edf3;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 999px;
+      padding: 6px 16px;
+    }
+    .credit a:hover { border-color: #58a6ff; text-decoration: none; }
+
     a { color: #58a6ff; text-decoration: none; }
     a:hover { text-decoration: underline; }
   </style>
@@ -853,6 +873,11 @@ app.get('/', (req, res) => {
       Page refreshes every 30s &nbsp;·&nbsp;
       <a href="/status">JSON status</a> &nbsp;·&nbsp;
       <a href="/dashboard/">Admin dashboard</a>
+    </div>
+
+    <div class="credit">
+      <img src="/dashboard/raptor-logo.png" alt="Made by raptor"/>
+      <a href="https://ko-fi.com/raptormakesstuff" target="_blank" rel="noopener">☕ Support on Ko-fi</a>
     </div>
   </div>
 </body>

@@ -1068,6 +1068,10 @@ const commands = [
     .setDescription("Try to steal from another player's cash on hand (has a cooldown)")
     .addUserOption(o => o.setName('user').setDescription('Who to rob').setRequired(true)),
 
+  new SlashCommandBuilder()
+    .setName('donate')
+    .setDescription('Support the developer'),
+
 ].map(c => c.toJSON());
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -2524,6 +2528,23 @@ React with 🎉 to enter!`)
     await interaction.reply(result.success
       ? `🔪 You robbed <@${target.id}> and got away with **${result.amount.toLocaleString()} ${econCfg.currencyName}**!`
       : `🚨 You tried to rob <@${target.id}> and got caught${result.penalty > 0 ? `, paying **${result.penalty.toLocaleString()} ${econCfg.currencyName}** in the process` : ''}.`);
+
+  // /donate
+  } else if (commandName === 'donate') {
+    const logoPath = path.join(__dirname, 'public', 'dashboard', 'raptor-logo.png');
+    const embed = new EmbedBuilder()
+      .setTitle('☕ Support the Developer')
+      .setURL('https://ko-fi.com/raptormakesstuff')
+      .setColor(0x29ABE0)
+      .setDescription('If you\'re enjoying GroundZeroAI, consider chipping in:\nhttps://ko-fi.com/raptormakesstuff')
+      .setImage('attachment://raptor-logo.png')
+      .setFooter({ text: 'Made by raptor' });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setLabel('Donate on Ko-fi').setStyle(ButtonStyle.Link).setURL('https://ko-fi.com/raptormakesstuff').setEmoji('☕'),
+    );
+    const payload = { embeds: [embed], components: [row] };
+    if (fs.existsSync(logoPath)) payload.files = [new AttachmentBuilder(logoPath, { name: 'raptor-logo.png' })];
+    await interaction.reply(payload);
   }
 });
 

@@ -2,6 +2,8 @@
 
 A Discord bot built for DayZ console (Xbox) communities. Includes a loot finder with live spawn heatmaps, server join info, server rules, DayZ tips, moderation tools, and a live status web page.
 
+Made by raptor — [support on Ko-fi](https://ko-fi.com/raptormakesstuff) if you find it useful.
+
 ---
 
 ## 📁 Files
