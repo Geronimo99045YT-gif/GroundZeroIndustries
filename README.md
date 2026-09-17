@@ -204,8 +204,13 @@ Requires FTP set up (see below) — earnings are pulled from the real `.ADM` ser
 | `/pay [user] [amount]` | Pay another player |
 | `/addmoney` / `/removemoney` | Admin: give or take money, with a reason |
 | `/setkillfeedchannel` / `/killfeedchannel` | Set or view where DayZ kills get posted |
+| `/work` | Earn a small guaranteed payout — has a cooldown |
+| `/crime` | Risk it for a bigger payout — can fail and cost you instead (cooldown) |
+| `/slut` | Same as /crime with different flavor text (cooldown) |
+| `/slots [bet]` | Spin the slot machine |
+| `/blackjack [bet]` | Play a full hand of blackjack against the dealer (Hit/Stand buttons) |
 
-Players earn automatically for: DayZ kills, DayZ playtime (10-minute increments), and Discord chat activity (rate-limited). All reward amounts, the currency name, and the killfeed channel are configurable in the dashboard's **Economy** tab, which also shows a leaderboard, transaction history, and a give/take-money tool.
+Players earn automatically for: DayZ kills, DayZ playtime (10-minute increments), and Discord chat activity (rate-limited) — plus the commands above for active/manual earning and gambling. All reward amounts, odds, cooldowns, bet limits, the currency name, and the killfeed channel are configurable in the dashboard's **Economy** tab, which also shows a leaderboard, transaction history, and a give/take-money tool.
 
 ---
 

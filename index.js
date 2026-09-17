@@ -34,6 +34,7 @@ const {
   REST, Routes, SlashCommandBuilder,
   PermissionFlagsBits, EmbedBuilder, Colors,
   ChannelType, AttachmentBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
 } = require('discord.js');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const fs   = require('fs');
@@ -1028,6 +1029,30 @@ const commands = [
     .setDescription('Show the current killfeed channel')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
+  // ── Economy minigames ────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('work')
+    .setDescription('Work a shift to earn money (has a cooldown)'),
+
+  new SlashCommandBuilder()
+    .setName('crime')
+    .setDescription('Attempt a risky crime for a bigger payout — can backfire (has a cooldown)'),
+
+  new SlashCommandBuilder()
+    .setName('slut')
+    .setDescription('Try your luck charming some quick cash — can backfire (has a cooldown)'),
+
+  new SlashCommandBuilder()
+    .setName('slots')
+    .setDescription('Play the slot machine')
+    .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
+
+  new SlashCommandBuilder()
+    .setName('blackjack')
+    .setDescription('Play blackjack against the dealer')
+    .addIntegerOption(o => o.setName('bet').setDescription('Amount to bet').setRequired(true).setMinValue(1)),
+
 ].map(c => c.toJSON());
 
 // ─── Client ───────────────────────────────────────────────────────────────────
@@ -1084,9 +1109,114 @@ function modEmbed(title, color, target, moderator, reason, extra = []) {
     .setTimestamp();
 }
 
+// ─── Blackjack (interactive game state + button handling) ─────────────────────
+// Map: messageId -> { guildId, userId, deck, playerHand, dealerHand, bet, resolved }
+const blackjackGames = new Map();
+
+function formatDuration(totalSeconds) {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function buildBlackjackEmbed({ playerHand, dealerHand, playerTotal, dealerTotal, bet, finished, outcome, payout, revealDealer, timedOut, currencyName = 'Scrap' }) {
+  const color = !finished ? 0x5865F2
+    : (outcome === 'win' || outcome === 'blackjack') ? 0x57F287
+    : outcome === 'push' ? 0xFEE75C : 0xED4245;
+
+  const embed = new EmbedBuilder().setTitle('🃏 Blackjack').setColor(color).addFields(
+    { name: `Your Hand (${playerTotal})`, value: actions.formatHand(playerHand), inline: true },
+    revealDealer
+      ? { name: `Dealer's Hand (${dealerTotal})`, value: actions.formatHand(dealerHand), inline: true }
+      : { name: 'Dealer Shows', value: `${actions.formatHand([dealerHand[0]])}  🂠`, inline: true },
+  );
+
+  if (finished) {
+    const outcomeText = {
+      blackjack: `🎉 Blackjack! You win **${payout.toLocaleString()} ${currencyName}**!`,
+      win: `🎉 You win **${payout.toLocaleString()} ${currencyName}**!`,
+      push: `🤝 Push — your **${bet.toLocaleString()}** bet is returned.`,
+      lose: `💀 You lose your **${bet.toLocaleString()}** bet.`,
+    }[outcome];
+    embed.setDescription((timedOut ? '_Timed out — auto-stood._\n' : '') + outcomeText);
+  } else {
+    embed.setDescription(`Bet: **${bet.toLocaleString()}** — Hit or Stand?`);
+  }
+  return embed;
+}
+
+async function settleStand(game, timedOut = false) {
+  game.resolved = true;
+  while (actions.handValue(game.dealerHand) < 17) game.dealerHand.push(game.deck.pop());
+  const playerTotal = actions.handValue(game.playerHand);
+  const dealerTotal = actions.handValue(game.dealerHand);
+  let outcome;
+  if (dealerTotal > 21 || playerTotal > dealerTotal) outcome = 'win';
+  else if (playerTotal === dealerTotal) outcome = 'push';
+  else outcome = 'lose';
+  const econCfg = await getEconomyConfig(game.guildId);
+  const payout = await actions.settleBlackjack(game.guildId, game.userId, game.bet, outcome);
+  return buildBlackjackEmbed({ ...game, playerTotal, dealerTotal, finished: true, outcome, payout, revealDealer: true, timedOut, currencyName: econCfg.currencyName });
+}
+
+async function resolveBlackjackTimeout(msg) {
+  const game = blackjackGames.get(msg.id);
+  if (!game || game.resolved) return;
+  const embed = await settleStand(game, true);
+  try { await msg.edit({ embeds: [embed], components: [] }); } catch {}
+  blackjackGames.delete(msg.id);
+}
+
+async function handleBlackjackButton(interaction) {
+  const game = blackjackGames.get(interaction.message.id);
+  if (!game || game.resolved) {
+    await interaction.reply({ content: 'This game has already ended.', ephemeral: true });
+    return;
+  }
+  if (interaction.user.id !== game.userId) {
+    await interaction.reply({ content: "This isn't your game.", ephemeral: true });
+    return;
+  }
+
+  if (interaction.customId === 'bj_hit') {
+    game.playerHand.push(game.deck.pop());
+    const playerTotal = actions.handValue(game.playerHand);
+    if (playerTotal > 21) {
+      game.resolved = true;
+      const econCfg = await getEconomyConfig(game.guildId);
+      const payout = await actions.settleBlackjack(game.guildId, game.userId, game.bet, 'lose');
+      const embed = buildBlackjackEmbed({ ...game, playerTotal, dealerTotal: actions.handValue(game.dealerHand), finished: true, outcome: 'lose', payout, revealDealer: true, currencyName: econCfg.currencyName });
+      await interaction.update({ embeds: [embed], components: [] });
+      blackjackGames.delete(interaction.message.id);
+      return;
+    }
+    const embed = buildBlackjackEmbed({ ...game, playerTotal, dealerTotal: null, finished: false });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('bj_hit').setLabel('Hit').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('bj_stand').setLabel('Stand').setStyle(ButtonStyle.Secondary),
+    );
+    await interaction.update({ embeds: [embed], components: [row] });
+    return;
+  }
+
+  // Stand
+  const embed = await settleStand(game);
+  await interaction.update({ embeds: [embed], components: [] });
+  blackjackGames.delete(interaction.message.id);
+}
+
 // ─── Command Handler ──────────────────────────────────────────────────────────
 
 client.on('interactionCreate', async interaction => {
+  if (interaction.isButton()) {
+    if (interaction.customId === 'bj_hit' || interaction.customId === 'bj_stand') {
+      await handleBlackjackButton(interaction).catch(err => console.error('Blackjack button error —', err.message));
+    }
+    return;
+  }
   if (!interaction.isChatInputCommand()) return;
   const { commandName, guild, user } = interaction;
 
@@ -2279,6 +2409,69 @@ React with 🎉 to enter!`)
   } else if (commandName === 'killfeedchannel') {
     const id = await getKillfeedChannel(guild.id);
     await interaction.reply({ content: id ? `Killfeed channel: <#${id}>` : 'No killfeed channel set. Use /setkillfeedchannel.', ephemeral: true });
+
+  // /work
+  } else if (commandName === 'work') {
+    const result = await actions.doWork(guild.id, user.id);
+    if (!result.ok) { await interaction.reply({ content: `⏳ You're on cooldown — try again in ${formatDuration(result.remainingSec)}.`, ephemeral: true }); return; }
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply(`💼 ${result.flavor} and earned **${result.amount.toLocaleString()} ${econCfg.currencyName}**.`);
+
+  // /crime, /slut
+  } else if (commandName === 'crime' || commandName === 'slut') {
+    const result = await actions.doRisky(guild.id, user.id, commandName);
+    if (!result.ok) { await interaction.reply({ content: `⏳ You're on cooldown — try again in ${formatDuration(result.remainingSec)}.`, ephemeral: true }); return; }
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply(result.success
+      ? `✅ ${result.flavor} — earned **${result.amount.toLocaleString()} ${econCfg.currencyName}**.`
+      : `❌ ${result.flavor} — lost **${result.amount.toLocaleString()} ${econCfg.currencyName}**.`);
+
+  // /slots
+  } else if (commandName === 'slots') {
+    const bet = interaction.options.getInteger('bet');
+    const result = await actions.playSlots(guild.id, user.id, bet);
+    if (!result.ok) { await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true }); return; }
+    const econCfg = await getEconomyConfig(guild.id);
+    const line = result.reels.join(' | ');
+    const outcomeText = result.net > 0
+      ? `🎉 You won **${result.payout.toLocaleString()} ${econCfg.currencyName}**!`
+      : result.net === 0
+        ? '🤝 Break even — bet returned.'
+        : `💀 You lost **${bet.toLocaleString()} ${econCfg.currencyName}**.`;
+    await interaction.reply(`🎰 [ ${line} ]\n${outcomeText}`);
+
+  // /blackjack
+  } else if (commandName === 'blackjack') {
+    const bet = interaction.options.getInteger('bet');
+    const validation = await actions.validateBlackjackBet(guild.id, user.id, bet);
+    if (!validation.ok) { await interaction.reply({ content: `❌ ${validation.error}`, ephemeral: true }); return; }
+
+    await db.adjustBalance(guild.id, user.id, -bet);
+    await db.recordTransaction(guild.id, { toUserId: user.id, amount: -bet, type: 'blackjack_bet' });
+
+    const deck = actions.newDeck();
+    const playerHand = [deck.pop(), deck.pop()];
+    const dealerHand = [deck.pop(), deck.pop()];
+    const playerTotal = actions.handValue(playerHand);
+    const dealerTotal = actions.handValue(dealerHand);
+
+    if (playerTotal === 21) {
+      const outcome = dealerTotal === 21 ? 'push' : 'blackjack';
+      const econCfg = await getEconomyConfig(guild.id);
+      const payout = await actions.settleBlackjack(guild.id, user.id, bet, outcome);
+      const embed = buildBlackjackEmbed({ playerHand, dealerHand, playerTotal, dealerTotal, bet, finished: true, outcome, payout, revealDealer: true, currencyName: econCfg.currencyName });
+      await interaction.reply({ embeds: [embed] });
+      return;
+    }
+
+    const embed = buildBlackjackEmbed({ playerHand, dealerHand, playerTotal, dealerTotal: null, bet, finished: false });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('bj_hit').setLabel('Hit').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('bj_stand').setLabel('Stand').setStyle(ButtonStyle.Secondary),
+    );
+    const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+    blackjackGames.set(msg.id, { guildId: guild.id, userId: user.id, deck, playerHand, dealerHand, bet, resolved: false });
+    setTimeout(() => resolveBlackjackTimeout(msg).catch(() => {}), 60_000);
   }
 });
 

@@ -374,6 +374,25 @@ app.delete('/api/guilds/:guildId/economy/link/:userId', requireAuth, requireGuil
   res.json({ ok: true });
 });
 
+app.get('/api/guilds/:guildId/economy/minigames', requireAuth, requireGuildAdmin, async (req, res) => {
+  const [work, risky, gambling] = await Promise.all([
+    db.getWorkConfig(req.params.guildId),
+    db.getRiskyConfig(req.params.guildId),
+    db.getGamblingConfig(req.params.guildId),
+  ]);
+  res.json({ work, risky, gambling });
+});
+
+app.put('/api/guilds/:guildId/economy/minigames', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { work, risky, gambling } = req.body ?? {};
+  const jobs = [];
+  if (work) jobs.push(db.setWorkConfig(req.params.guildId, work));
+  if (risky) jobs.push(db.setRiskyConfig(req.params.guildId, risky));
+  if (gambling) jobs.push(db.setGamblingConfig(req.params.guildId, gambling));
+  await Promise.all(jobs);
+  res.json({ ok: true });
+});
+
 // ─── API: moderation actions ──────────────────────────────────────────────────
 
 app.post('/api/guilds/:guildId/moderation/purge', requireAuth, requireGuildAdmin, async (req, res) => {

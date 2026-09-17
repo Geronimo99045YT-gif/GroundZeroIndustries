@@ -716,6 +716,46 @@ document.getElementById('economyConfigForm').addEventListener('submit', async e 
   } catch (err) { flash('economyConfigMsg', err.message, 'error'); }
 });
 
+async function loadMinigamesConfig() {
+  const { work, risky, gambling } = await api(`/api/guilds/${guildId}/economy/minigames`);
+  const f = document.getElementById('minigamesForm');
+  f.work_cooldownSec.value = work.cooldownSec;
+  f.work_min.value = work.min;
+  f.work_max.value = work.max;
+  f.risky_cooldownSec.value = risky.cooldownSec;
+  f.risky_successChance.value = risky.successChance;
+  f.risky_min.value = risky.min;
+  f.risky_max.value = risky.max;
+  f.risky_failMin.value = risky.failMin;
+  f.risky_failMax.value = risky.failMax;
+  f.gambling_slotsMinBet.value = gambling.slotsMinBet;
+  f.gambling_slotsMaxBet.value = gambling.slotsMaxBet;
+  f.gambling_blackjackMinBet.value = gambling.blackjackMinBet;
+  f.gambling_blackjackMaxBet.value = gambling.blackjackMaxBet;
+}
+document.getElementById('minigamesForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const num = name => parseFloat(fd.get(name));
+  try {
+    await api(`/api/guilds/${guildId}/economy/minigames`, {
+      method: 'PUT',
+      body: {
+        work: { cooldownSec: num('work_cooldownSec'), min: num('work_min'), max: num('work_max') },
+        risky: {
+          cooldownSec: num('risky_cooldownSec'), successChance: num('risky_successChance'),
+          min: num('risky_min'), max: num('risky_max'), failMin: num('risky_failMin'), failMax: num('risky_failMax'),
+        },
+        gambling: {
+          slotsMinBet: num('gambling_slotsMinBet'), slotsMaxBet: num('gambling_slotsMaxBet'),
+          blackjackMinBet: num('gambling_blackjackMinBet'), blackjackMaxBet: num('gambling_blackjackMaxBet'),
+        },
+      },
+    });
+    flash('minigamesMsg', 'Saved.');
+  } catch (err) { flash('minigamesMsg', err.message, 'error'); }
+});
+
 document.getElementById('grantForm').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
@@ -815,6 +855,7 @@ async function removeLinkLookup(userId) {
     loadTempbans();
     loadDayzStatus();
     loadEconomyConfig();
+    loadMinigamesConfig();
     loadLeaderboard();
     loadTransactions();
   } catch (err) {

@@ -331,6 +331,75 @@ async function setOpenSessions(guildId, sessions) {
   await saveGuildConfig(guildId, { dayz_open_sessions: sessions });
 }
 
+// ─── Minigame config ────────────────────────────────────────────────────────
+
+async function getWorkConfig(guildId) {
+  const c = await getGuildConfig(guildId);
+  return {
+    cooldownSec: c.economy_work_cooldown_sec ?? 3600,
+    min: c.economy_work_min ?? 10,
+    max: c.economy_work_max ?? 40,
+  };
+}
+async function setWorkConfig(guildId, updates) {
+  const patch = {};
+  if ('cooldownSec' in updates) patch.economy_work_cooldown_sec = updates.cooldownSec;
+  if ('min' in updates) patch.economy_work_min = updates.min;
+  if ('max' in updates) patch.economy_work_max = updates.max;
+  await saveGuildConfig(guildId, patch);
+}
+
+// Shared by /crime and /slut — same mechanic, different flavor text.
+async function getRiskyConfig(guildId) {
+  const c = await getGuildConfig(guildId);
+  return {
+    cooldownSec: c.economy_risky_cooldown_sec ?? 1800,
+    min: c.economy_risky_min ?? 20,
+    max: c.economy_risky_max ?? 80,
+    successChance: c.economy_risky_success_chance ?? 0.6,
+    failMin: c.economy_risky_fail_min ?? 10,
+    failMax: c.economy_risky_fail_max ?? 40,
+  };
+}
+async function setRiskyConfig(guildId, updates) {
+  const map = {
+    cooldownSec: 'economy_risky_cooldown_sec', min: 'economy_risky_min', max: 'economy_risky_max',
+    successChance: 'economy_risky_success_chance', failMin: 'economy_risky_fail_min', failMax: 'economy_risky_fail_max',
+  };
+  const patch = {};
+  for (const [key, col] of Object.entries(map)) if (key in updates) patch[col] = updates[key];
+  await saveGuildConfig(guildId, patch);
+}
+
+async function getGamblingConfig(guildId) {
+  const c = await getGuildConfig(guildId);
+  return {
+    slotsMinBet: c.economy_slots_min_bet ?? 5,
+    slotsMaxBet: c.economy_slots_max_bet ?? 500,
+    blackjackMinBet: c.economy_blackjack_min_bet ?? 5,
+    blackjackMaxBet: c.economy_blackjack_max_bet ?? 500,
+  };
+}
+async function setGamblingConfig(guildId, updates) {
+  const map = {
+    slotsMinBet: 'economy_slots_min_bet', slotsMaxBet: 'economy_slots_max_bet',
+    blackjackMinBet: 'economy_blackjack_min_bet', blackjackMaxBet: 'economy_blackjack_max_bet',
+  };
+  const patch = {};
+  for (const [key, col] of Object.entries(map)) if (key in updates) patch[col] = updates[key];
+  await saveGuildConfig(guildId, patch);
+}
+
+// ─── Cooldowns (persisted so redeploys don't reset them) ───────────────────────
+
+async function getCooldown(guildId, userId, command) {
+  const rows = await sbRequest('GET', `/rest/v1/command_cooldowns?guild_id=eq.${guildId}&user_id=eq.${userId}&command=eq.${command}&limit=1`);
+  return Array.isArray(rows) && rows[0] ? new Date(rows[0].used_at) : null;
+}
+async function setCooldown(guildId, userId, command) {
+  return sbRequest('POST', '/rest/v1/command_cooldowns', { guild_id: guildId, user_id: userId, command, used_at: new Date().toISOString() });
+}
+
 // ─── Economy (balances & transactions) ─────────────────────────────────────────
 
 async function getBalance(guildId, userId) {
@@ -427,4 +496,6 @@ module.exports = {
   getOpenSessions, setOpenSessions,
   getBalance, adjustBalance, recordTransaction, getTransactions, getLeaderboard,
   getLinkByUser, getLinkByIgn, createLink, removeLink,
+  getWorkConfig, setWorkConfig, getRiskyConfig, setRiskyConfig, getGamblingConfig, setGamblingConfig,
+  getCooldown, setCooldown,
 };

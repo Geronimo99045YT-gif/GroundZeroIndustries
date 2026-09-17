@@ -382,6 +382,36 @@
       </div>
 
       <div class="card">
+        <h2>Minigame Settings</h2>
+        <div id="minigamesMsg" class="msg hidden"></div>
+        <form id="minigamesForm">
+          <div class="section-title">/work</div>
+          <div class="grid cols-3">
+            <div class="field"><label>Cooldown (seconds)</label><input name="work_cooldownSec" type="number" min="1" required></div>
+            <div class="field"><label>Min Payout</label><input name="work_min" type="number" min="0" required></div>
+            <div class="field"><label>Max Payout</label><input name="work_max" type="number" min="0" required></div>
+          </div>
+          <div class="section-title">/crime &amp; /slut (shared)</div>
+          <div class="grid cols-3">
+            <div class="field"><label>Cooldown (seconds)</label><input name="risky_cooldownSec" type="number" min="1" required></div>
+            <div class="field"><label>Success Chance (0-1)</label><input name="risky_successChance" type="number" min="0" max="1" step="0.05" required></div>
+            <div class="field"><label>Min Success Payout</label><input name="risky_min" type="number" min="0" required></div>
+            <div class="field"><label>Max Success Payout</label><input name="risky_max" type="number" min="0" required></div>
+            <div class="field"><label>Min Fail Penalty</label><input name="risky_failMin" type="number" min="0" required></div>
+            <div class="field"><label>Max Fail Penalty</label><input name="risky_failMax" type="number" min="0" required></div>
+          </div>
+          <div class="section-title">/slots &amp; /blackjack</div>
+          <div class="grid cols-2">
+            <div class="field"><label>Slots Min Bet</label><input name="gambling_slotsMinBet" type="number" min="1" required></div>
+            <div class="field"><label>Slots Max Bet</label><input name="gambling_slotsMaxBet" type="number" min="1" required></div>
+            <div class="field"><label>Blackjack Min Bet</label><input name="gambling_blackjackMinBet" type="number" min="1" required></div>
+            <div class="field"><label>Blackjack Max Bet</label><input name="gambling_blackjackMaxBet" type="number" min="1" required></div>
+          </div>
+          <button class="primary" type="submit">Save</button>
+        </form>
+      </div>
+
+      <div class="card">
         <h2>Give / Take Money</h2>
         <div id="grantMsg" class="msg hidden"></div>
         <form id="grantForm" class="row">

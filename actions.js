@@ -569,6 +569,205 @@ async function scanAllDayzActivity() {
   }
 }
 
+// ─── Economy minigames ──────────────────────────────────────────────────────
+
+function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+async function checkCooldown(guildId, userId, command, cooldownSec) {
+  const last = await db.getCooldown(guildId, userId, command);
+  if (!last) return { ready: true, remainingSec: 0 };
+  const elapsed = (Date.now() - last.getTime()) / 1000;
+  if (elapsed >= cooldownSec) return { ready: true, remainingSec: 0 };
+  return { ready: false, remainingSec: Math.ceil(cooldownSec - elapsed) };
+}
+
+const WORK_FLAVOR = [
+  'You worked a shift scavenging scrap around the coast',
+  'You helped patch up the base fences',
+  'You ran supplies between camps',
+  'You skinned and sold a haul of fresh meat',
+  'You guided a fresh spawn to safety for a tip',
+  'You spent the day fixing up a beat-up vehicle',
+  'You stood watch on the wall for a few hours',
+  'You sorted loot at the trader for some spare change',
+  'You hauled water from the well all morning',
+  'You chopped firewood for the whole camp',
+];
+
+async function doWork(guildId, userId) {
+  const cfg = await db.getWorkConfig(guildId);
+  const cd = await checkCooldown(guildId, userId, 'work', cfg.cooldownSec);
+  if (!cd.ready) return { ok: false, remainingSec: cd.remainingSec };
+
+  const amount = randInt(cfg.min, cfg.max);
+  await db.setCooldown(guildId, userId, 'work');
+  await creditEarning(guildId, userId, amount, 'earn_work');
+  const flavor = WORK_FLAVOR[Math.floor(Math.random() * WORK_FLAVOR.length)];
+  return { ok: true, amount, flavor };
+}
+
+const RISKY_FLAVOR = {
+  crime: {
+    success: [
+      'You raided an abandoned stash and got away clean',
+      'You picked a lock on a stocked container without anyone noticing',
+      'You jumped an unarmed player and looted their bag',
+      'You hotwired an unattended vehicle and stripped it for parts',
+      'You snuck past a group and lifted supplies from their camp',
+    ],
+    fail: [
+      'You got spotted mid-raid and had to bail, losing gear in the process',
+      'You tripped an alarm and had to pay to keep it quiet',
+      'You picked a fight with the wrong person and got cleaned out',
+      'Your hotwire attempt set off the car alarm and drew a crowd',
+      'You got caught red-handed and had to buy your way out of trouble',
+    ],
+  },
+  slut: {
+    success: [
+      'You charmed your way into someone\'s wallet',
+      'You flirted your way past a trader for a discount and flipped the difference',
+      'Someone paid well for the company on a long trek',
+      'You talked your way into a free ride and pocketed the fare instead',
+      'Your charm offensive on the radio actually worked, for once',
+    ],
+    fail: [
+      'Your advances got rejected hard, and it cost you',
+      'You got laughed out of the trade and lost some pride and Scrap',
+      'That flirting attempt backfired spectacularly',
+      'You misjudged the room badly and had to pay to leave',
+      'Nobody was buying what you were selling today',
+    ],
+  },
+};
+
+async function doRisky(guildId, userId, command) {
+  const cfg = await db.getRiskyConfig(guildId);
+  const cd = await checkCooldown(guildId, userId, command, cfg.cooldownSec);
+  if (!cd.ready) return { ok: false, remainingSec: cd.remainingSec };
+
+  await db.setCooldown(guildId, userId, command);
+  const pool = RISKY_FLAVOR[command];
+  const success = Math.random() < cfg.successChance;
+
+  if (success) {
+    const amount = randInt(cfg.min, cfg.max);
+    await creditEarning(guildId, userId, amount, `earn_${command}`);
+    return { ok: true, success: true, amount, flavor: pool.success[Math.floor(Math.random() * pool.success.length)] };
+  }
+  const penalty = randInt(cfg.failMin, cfg.failMax);
+  const balance = await db.getBalance(guildId, userId);
+  const actualLoss = Math.min(penalty, balance);
+  if (actualLoss > 0) {
+    await db.adjustBalance(guildId, userId, -actualLoss);
+    await db.recordTransaction(guildId, { toUserId: userId, amount: -actualLoss, type: `fail_${command}` });
+  }
+  return { ok: true, success: false, amount: actualLoss, flavor: pool.fail[Math.floor(Math.random() * pool.fail.length)] };
+}
+
+// ─── Slots ───────────────────────────────────────────────────────────────────
+
+const SLOT_SYMBOLS = [
+  { symbol: '🍒', weight: 40, multiplier: 3 },
+  { symbol: '🍋', weight: 30, multiplier: 4 },
+  { symbol: '🍇', weight: 18, multiplier: 6 },
+  { symbol: '🔔', weight: 8,  multiplier: 10 },
+  { symbol: '💎', weight: 3,  multiplier: 20 },
+  { symbol: '7️⃣', weight: 1,  multiplier: 50 },
+];
+const SLOT_TOTAL_WEIGHT = SLOT_SYMBOLS.reduce((sum, s) => sum + s.weight, 0);
+
+function spinReel() {
+  let roll = Math.random() * SLOT_TOTAL_WEIGHT;
+  for (const s of SLOT_SYMBOLS) {
+    if (roll < s.weight) return s;
+    roll -= s.weight;
+  }
+  return SLOT_SYMBOLS[0];
+}
+
+async function playSlots(guildId, userId, bet) {
+  const cfg = await db.getGamblingConfig(guildId);
+  if (bet < cfg.slotsMinBet || bet > cfg.slotsMaxBet) {
+    return { ok: false, error: `Bet must be between ${cfg.slotsMinBet} and ${cfg.slotsMaxBet}.` };
+  }
+  const balance = await db.getBalance(guildId, userId);
+  if (balance < bet) return { ok: false, error: `Insufficient balance (you have ${balance}).` };
+
+  const reels = [spinReel(), spinReel(), spinReel()];
+  let payout = 0;
+  if (reels[0].symbol === reels[1].symbol && reels[1].symbol === reels[2].symbol) {
+    payout = bet * reels[0].multiplier;
+  } else if (reels[0].symbol === reels[1].symbol || reels[1].symbol === reels[2].symbol || reels[0].symbol === reels[2].symbol) {
+    payout = bet; // break even on any pair
+  }
+
+  const net = payout - bet;
+  if (net !== 0) await db.adjustBalance(guildId, userId, net);
+  if (net !== 0) await db.recordTransaction(guildId, { toUserId: userId, amount: net, type: 'slots' });
+
+  return { ok: true, reels: reels.map(r => r.symbol), payout, net };
+}
+
+// ─── Blackjack (pure game logic — interactive wiring lives in index.js) ───────
+
+function newDeck() {
+  const suits = ['♠', '♥', '♦', '♣'];
+  const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+  const deck = [];
+  for (const suit of suits) for (const rank of ranks) deck.push({ rank, suit });
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
+function cardValue(card) {
+  if (card.rank === 'A') return 11;
+  if (card.rank === 'J' || card.rank === 'Q' || card.rank === 'K') return 10;
+  return parseInt(card.rank, 10);
+}
+
+function handValue(hand) {
+  let total = hand.reduce((sum, c) => sum + cardValue(c), 0);
+  let aces = hand.filter(c => c.rank === 'A').length;
+  while (total > 21 && aces > 0) { total -= 10; aces--; }
+  return total;
+}
+
+function formatHand(hand) {
+  return hand.map(c => `${c.rank}${c.suit}`).join(' ');
+}
+
+async function validateBlackjackBet(guildId, userId, bet) {
+  const cfg = await db.getGamblingConfig(guildId);
+  if (bet < cfg.blackjackMinBet || bet > cfg.blackjackMaxBet) {
+    return { ok: false, error: `Bet must be between ${cfg.blackjackMinBet} and ${cfg.blackjackMaxBet}.` };
+  }
+  const balance = await db.getBalance(guildId, userId);
+  if (balance < bet) return { ok: false, error: `Insufficient balance (you have ${balance}).` };
+  return { ok: true };
+}
+
+// Settles a finished blackjack hand: pays out and records the transaction.
+// outcome: 'blackjack' (3:2), 'win' (1:1), 'push' (bet returned), 'lose' (bet forfeited, already deducted at deal time).
+async function settleBlackjack(guildId, userId, bet, outcome) {
+  let payout = 0;
+  if (outcome === 'blackjack') payout = bet + Math.floor(bet * 1.5);
+  else if (outcome === 'win') payout = bet * 2;
+  else if (outcome === 'push') payout = bet;
+  // 'lose' -> payout stays 0, bet was already taken when the hand was dealt
+
+  if (payout > 0) {
+    await db.adjustBalance(guildId, userId, payout);
+    await db.recordTransaction(guildId, { toUserId: userId, amount: payout, type: `blackjack_${outcome}` });
+  } else {
+    await db.recordTransaction(guildId, { toUserId: userId, amount: 0, type: `blackjack_${outcome}` });
+  }
+  return payout;
+}
+
 module.exports = {
   setClient,
   buildRulesEmbeds, postRulesToChannel,
@@ -582,4 +781,7 @@ module.exports = {
   payUser, adminAdjustBalance, creditEarning,
   linkPlayer, unlinkPlayer,
   scanDayzActivity, scanAllDayzActivity,
+  doWork, doRisky,
+  playSlots,
+  newDeck, handValue, formatHand, validateBlackjackBet, settleBlackjack,
 };
