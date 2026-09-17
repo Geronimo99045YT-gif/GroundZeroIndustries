@@ -5,6 +5,7 @@ const https        = require('https');
 
 const db      = require('./db');
 const actions = require('./actions');
+const dayzFtp = require('./ftp');
 
 const PORT             = process.env.PORT || 3000;
 const CLIENT_ID        = process.env.CLIENT_ID;
@@ -510,6 +511,63 @@ app.post('/api/guilds/:guildId/giveaways/:id/reroll', requireAuth, requireGuildA
   const result = await actions.rerollGiveaway(parseInt(req.params.id, 10));
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
+});
+
+// ─── API: DayZ server (FTP/Nitrado) ────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/dayz/status', requireAuth, requireGuildAdmin, async (req, res) => {
+  const profilesPath = await db.getDayzProfilesPath(req.params.guildId);
+  res.json({ configured: dayzFtp.isConfigured(), profilesPath });
+});
+
+app.put('/api/guilds/:guildId/dayz/profiles-path', requireAuth, requireGuildAdmin, async (req, res) => {
+  await db.setDayzProfilesPath(req.params.guildId, req.body?.path || null);
+  res.json({ ok: true });
+});
+
+app.get('/api/guilds/:guildId/dayz/browse', requireAuth, requireGuildAdmin, async (req, res) => {
+  try {
+    const entries = await dayzFtp.listDir(req.query.path || '/');
+    res.json(entries);
+  } catch (err) {
+    res.status(502).json({ error: `FTP error: ${err.message}` });
+  }
+});
+
+app.get('/api/guilds/:guildId/dayz/file', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { path, tail } = req.query;
+  if (!path) return res.status(400).json({ error: 'path is required.' });
+  try {
+    const result = tail === 'true' ? await dayzFtp.readTextTail(path) : await dayzFtp.readTextFull(path);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: `FTP error: ${err.message}` });
+  }
+});
+
+app.put('/api/guilds/:guildId/dayz/file', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { path, content } = req.body ?? {};
+  if (!path || content == null) return res.status(400).json({ error: 'path and content are required.' });
+  try {
+    await dayzFtp.writeText(path, content);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ error: `FTP error: ${err.message}` });
+  }
+});
+
+app.get('/api/guilds/:guildId/dayz/activity', requireAuth, requireGuildAdmin, async (req, res) => {
+  const profilesPath = req.query.path || await db.getDayzProfilesPath(req.params.guildId);
+  if (!profilesPath) return res.status(400).json({ error: 'Set a DayZ profiles path first.' });
+  try {
+    const logPath = await dayzFtp.findLatestAdmLog(profilesPath);
+    if (!logPath) return res.status(404).json({ error: `No .ADM log files found in ${profilesPath}.` });
+    const { text, totalSize } = await dayzFtp.readTextTail(logPath, 300_000);
+    const events = dayzFtp.parseAdmLog(text);
+    res.json({ logPath, totalSize, events: events.slice(-300).reverse() });
+  } catch (err) {
+    res.status(502).json({ error: `FTP error: ${err.message}` });
+  }
 });
 
 // ─── API: player stats ───────────────────────────────────────────────────────

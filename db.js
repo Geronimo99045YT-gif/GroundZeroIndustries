@@ -106,6 +106,9 @@ async function setReportsChannel(guildId, v) { await saveGuildConfig(guildId, { 
 async function getHoneypotChannel(guildId)    { return (await getGuildConfig(guildId)).honeypot_channel_id ?? null; }
 async function setHoneypotChannel(guildId, v) { await saveGuildConfig(guildId, { honeypot_channel_id: v }); }
 
+async function getDayzProfilesPath(guildId)    { return (await getGuildConfig(guildId)).dayz_profiles_path ?? null; }
+async function setDayzProfilesPath(guildId, v) { await saveGuildConfig(guildId, { dayz_profiles_path: v }); }
+
 async function getRules(guildId) {
   return (await sbGetRules(guildId)) ?? mem(guildId).rules;
 }
@@ -312,6 +315,7 @@ module.exports = {
   getAutoRole, setAutoRole,
   getReportsChannel, setReportsChannel,
   getHoneypotChannel, setHoneypotChannel,
+  getDayzProfilesPath, setDayzProfilesPath,
   getRules, addRule, removeRule,
   addWarning, getWarnings, removeWarning,
   getWarnPunishConfig, setWarnPunishConfig,

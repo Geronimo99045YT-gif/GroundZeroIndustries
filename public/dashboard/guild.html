@@ -23,15 +23,28 @@
   <div id="app" hidden>
 
     <div class="tabs">
-      <button class="tab-btn active" data-tab="overview">Overview</button>
-      <button class="tab-btn" data-tab="serverinfo">Server Info</button>
-      <button class="tab-btn" data-tab="channels">Channels &amp; Roles</button>
-      <button class="tab-btn" data-tab="rules">Rules</button>
-      <button class="tab-btn" data-tab="moderation">Moderation</button>
-      <button class="tab-btn" data-tab="trashtalk">Trash Talk</button>
-      <button class="tab-btn" data-tab="schedules">Schedules</button>
-      <button class="tab-btn" data-tab="giveaways">Giveaways</button>
-      <button class="tab-btn" data-tab="stats">Player Stats</button>
+      <div class="tab-group">
+        <div class="tab-group-label">Discord Management</div>
+        <div class="tab-group-buttons">
+          <button class="tab-btn active" data-tab="overview">Overview</button>
+          <button class="tab-btn" data-tab="channels">Channels &amp; Roles</button>
+          <button class="tab-btn" data-tab="rules">Rules</button>
+          <button class="tab-btn" data-tab="moderation">Moderation</button>
+          <button class="tab-btn" data-tab="trashtalk">Trash Talk</button>
+          <button class="tab-btn" data-tab="schedules">Schedules</button>
+          <button class="tab-btn" data-tab="giveaways">Giveaways</button>
+          <button class="tab-btn" data-tab="stats">Player Stats</button>
+        </div>
+      </div>
+      <div class="tab-group">
+        <div class="tab-group-label">Server Management</div>
+        <div class="tab-group-buttons">
+          <button class="tab-btn" data-tab="serverinfo">Server Info</button>
+          <button class="tab-btn" data-tab="dayzactivity">Activity Log</button>
+          <button class="tab-btn" data-tab="dayzfiles">File Browser</button>
+          <button class="tab-btn" data-tab="dayzbans">Ban List</button>
+        </div>
+      </div>
     </div>
 
     <!-- Overview -->
@@ -57,6 +70,74 @@
           <div class="field"><label>Extra join instructions</label><textarea name="extra" rows="2"></textarea></div>
           <button class="primary" type="submit">Save</button>
         </form>
+      </div>
+    </div>
+
+    <!-- DayZ: Activity Log -->
+    <div class="tab-panel" id="tab-dayzactivity">
+      <div id="dayzNotConfigured" class="msg error" hidden>FTP isn't configured on the bot yet — add <code>FTP_HOST</code>, <code>FTP_USER</code>, and <code>FTP_PASS</code> in Render (from your Nitrado FTP details) to enable server management features.</div>
+      <div id="dayzActivityApp" hidden>
+        <div class="card">
+          <h2>DayZ Profiles Path</h2>
+          <p class="muted" style="margin-bottom:10px">The folder on your FTP server containing the <code>.ADM</code> admin log files (usually something like <code>/dayz/profiles</code>).</p>
+          <div id="dayzPathMsg" class="msg hidden"></div>
+          <form id="dayzPathForm" class="row">
+            <div class="field"><label>Profiles Path</label><input name="path" placeholder="/dayz/profiles" required></div>
+            <button class="primary" type="submit" style="flex:0 0 auto">Save</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Recent Server Activity</h2>
+          <div id="activityMsg" class="msg hidden"></div>
+          <div class="row" style="margin-bottom:12px">
+            <button class="btn" id="refreshActivityBtn" style="flex:0 0 auto">Refresh</button>
+            <div class="checkbox-row" style="flex:0 0 auto"><input type="checkbox" id="showRawEvents"><label style="margin:0" for="showRawEvents">Show unrecognised lines too</label></div>
+          </div>
+          <div id="activityLog" class="muted">Set a profiles path above, then hit Refresh.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DayZ: File Browser -->
+    <div class="tab-panel" id="tab-dayzfiles">
+      <div id="dayzFilesNotConfigured" class="msg error" hidden>FTP isn't configured on the bot yet.</div>
+      <div id="dayzFilesApp" hidden>
+        <div class="card">
+          <h2>Server Files</h2>
+          <div id="filesMsg" class="msg hidden"></div>
+          <div class="breadcrumb" id="fileBreadcrumb"></div>
+          <div id="fileListing"></div>
+        </div>
+        <div class="card" id="fileViewerCard" hidden>
+          <h2 id="fileViewerName">File</h2>
+          <div id="fileViewerContent"></div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn" type="button" id="editFileBtn" style="flex:0 0 auto">Edit</button>
+            <button class="primary" type="button" id="saveFileBtn" style="flex:0 0 auto" hidden>Save Changes</button>
+            <button type="button" id="cancelEditBtn" style="flex:0 0 auto" hidden>Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DayZ: Ban List -->
+    <div class="tab-panel" id="tab-dayzbans">
+      <div id="dayzBansNotConfigured" class="msg error" hidden>FTP isn't configured on the bot yet.</div>
+      <div id="dayzBansApp" hidden>
+        <div class="card">
+          <h2>Ban List</h2>
+          <p class="muted" style="margin-bottom:10px">Edits the server's ban file directly. Format depends on your server (usually one SteamID64 per line) — entries are edited as raw lines to stay compatible with whatever format your server uses.</p>
+          <div id="bansMsg" class="msg hidden"></div>
+          <form id="banPathForm" class="row">
+            <div class="field"><label>Ban File Path</label><input name="path" placeholder="/dayz/profiles/ban.txt" required></div>
+            <button class="btn" type="submit" style="flex:0 0 auto">Load</button>
+          </form>
+          <div id="banList" style="margin-top:14px"></div>
+          <form id="addBanForm" class="row">
+            <div class="field"><label>Add line (e.g. SteamID64)</label><input name="entry" required></div>
+            <button class="primary" type="submit" style="flex:0 0 auto">Add</button>
+          </form>
+        </div>
       </div>
     </div>
 

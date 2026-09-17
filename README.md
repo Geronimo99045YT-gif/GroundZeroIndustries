@@ -11,6 +11,7 @@ A Discord bot built for DayZ console (Xbox) communities. Includes a loot finder 
 | `index.js` | Main bot — this is what runs |
 | `db.js` | Supabase data layer (shared by the bot and the dashboard) |
 | `actions.js` | Shared logic that needs the live Discord client (rules posting, giveaways, AI stats) |
+| `ftp.js` | Nitrado FTP access for the dashboard's Server Management section |
 | `server.js` | Status page + admin dashboard (auto-starts with the bot) |
 | `public/dashboard/` | Dashboard frontend (HTML/CSS/JS) |
 | `package.json` | Node.js dependencies |
@@ -217,7 +218,12 @@ A web control panel lives at `https://your-bot.onrender.com/dashboard/`. Anyone 
 - GroundZeroAI is in the server, and
 - the logged-in Discord account has **Administrator** there.
 
-It covers server join info, log/rules/welcome/reports/honeypot channels, auto-role, target role, rules (add/remove/post), the trash talk toggle, scheduled messages, giveaways (create/end/reroll), and a player-stats lookup — plus a Moderation tab for purge, slowmode/lock/unlock, softban/tempban, automod filters, and viewing/removing warnings. Quick in-the-moment actions (`/kick /ban /mute`) stay as slash commands on purpose.
+It's split into two sections:
+
+- **Discord Management** — everything about the bot and community: channels/roles, rules, moderation (purge, slowmode/lock/unlock, softban/tempban, automod filters, warnings), trash talk, scheduled messages, giveaways, player stats.
+- **Server Management** — the actual DayZ game server, over FTP: server join info, a parsed activity log (connects, disconnects, kills — read from the `.ADM` admin log), a file browser for the server's FTP files (view and edit text files), and a ban list editor. Requires the `FTP_*` env vars below; without them this section shows a setup notice instead of erroring.
+
+Quick in-the-moment moderation actions (`/kick /ban /mute`) stay as slash commands on purpose.
 
 ### One-time setup
 
@@ -248,9 +254,14 @@ DISCORD_TOKEN=your_bot_token
 CLIENT_ID=your_application_id
 DISCORD_CLIENT_SECRET=your_oauth_client_secret   (dashboard login)
 SESSION_SECRET=any_long_random_string            (dashboard login)
+FTP_HOST=your_nitrado_ftp_host                   (dashboard Server Management)
+FTP_USER=your_nitrado_ftp_username
+FTP_PASS=your_nitrado_ftp_password
+FTP_PORT=21                                      (usually 21 — optional, defaults to 21)
+FTP_SECURE=true                                  (optional — set to false only if your host uses plain FTP, not FTPS)
 ```
 
-Never commit these to GitHub. Keep your repo **Private**.
+Find your FTP host/username/password in Nitrado's web panel under your DayZ service → **FTP & File Access**. Never commit these to GitHub. Keep your repo **Private**.
 
 ---
 

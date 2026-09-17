@@ -471,6 +471,220 @@ async function deleteWarning(id, userId) {
   catch (err) { alert(err.message); }
 }
 
+// ─── DayZ Server Management (FTP) ──────────────────────────────────────────
+
+let DAYZ_CONFIGURED = false;
+let DAYZ_PROFILES_PATH = null;
+
+function formatBytes(n) {
+  if (n == null) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function joinPath(dir, name) {
+  return dir.replace(/\/$/, '') + '/' + name;
+}
+
+async function loadDayzStatus() {
+  const status = await api(`/api/guilds/${guildId}/dayz/status`);
+  DAYZ_CONFIGURED = status.configured;
+  DAYZ_PROFILES_PATH = status.profilesPath;
+
+  for (const [gateId, appId] of [
+    ['dayzNotConfigured', 'dayzActivityApp'],
+    ['dayzFilesNotConfigured', 'dayzFilesApp'],
+    ['dayzBansNotConfigured', 'dayzBansApp'],
+  ]) {
+    document.getElementById(gateId).hidden = DAYZ_CONFIGURED;
+    document.getElementById(appId).hidden = !DAYZ_CONFIGURED;
+  }
+  if (!DAYZ_CONFIGURED) return;
+
+  if (DAYZ_PROFILES_PATH) {
+    document.getElementById('dayzPathForm').path.value = DAYZ_PROFILES_PATH;
+    document.getElementById('banPathForm').path.value = joinPath(DAYZ_PROFILES_PATH, 'ban.txt');
+    fileBrowse(DAYZ_PROFILES_PATH);
+  } else {
+    fileBrowse('/');
+  }
+}
+
+document.getElementById('dayzPathForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const path = new FormData(e.target).get('path').trim();
+  try {
+    await api(`/api/guilds/${guildId}/dayz/profiles-path`, { method: 'PUT', body: { path } });
+    DAYZ_PROFILES_PATH = path;
+    document.getElementById('banPathForm').path.value = joinPath(path, 'ban.txt');
+    flash('dayzPathMsg', 'Saved.');
+  } catch (err) { flash('dayzPathMsg', err.message, 'error'); }
+});
+
+// ── Activity log ──
+const EVENT_LABELS = { connect: 'Connect', disconnect: 'Disconnect', kill: 'Hit', death: 'Death', chat: 'Chat', session: 'Session', raw: 'Info' };
+let LAST_ACTIVITY_EVENTS = [];
+function renderActivity(events) {
+  const showRaw = document.getElementById('showRawEvents').checked;
+  const filtered = showRaw ? events : events.filter(e => e.type !== 'raw');
+  const el = document.getElementById('activityLog');
+  if (filtered.length === 0) { el.innerHTML = `<p class="muted">No events found.</p>`; return; }
+  el.innerHTML = filtered.map(e => `
+    <div class="event-row">
+      <span class="event-time">${escapeHtml(e.time || '')}</span>
+      <span class="event-badge ${e.type}">${EVENT_LABELS[e.type] || e.type}</span>
+      <span>${escapeHtml(e.raw)}</span>
+    </div>
+  `).join('');
+}
+async function loadActivity() {
+  if (!DAYZ_PROFILES_PATH) { flash('activityMsg', 'Set a profiles path first.', 'error'); return; }
+  document.getElementById('activityLog').innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const { events } = await api(`/api/guilds/${guildId}/dayz/activity`);
+    LAST_ACTIVITY_EVENTS = events;
+    renderActivity(events);
+  } catch (err) {
+    flash('activityMsg', err.message, 'error');
+    document.getElementById('activityLog').innerHTML = '';
+  }
+}
+document.getElementById('refreshActivityBtn').addEventListener('click', loadActivity);
+document.getElementById('showRawEvents').addEventListener('change', () => renderActivity(LAST_ACTIVITY_EVENTS));
+
+// ── File browser ──
+let CURRENT_FILE_PATH = null;
+
+function breadcrumbHtml(path) {
+  const parts = path.split('/').filter(Boolean);
+  let acc = '';
+  const crumbs = [`<button data-path="/">root</button>`];
+  for (const part of parts) {
+    acc += '/' + part;
+    crumbs.push(`<button data-path="${escapeHtml(acc)}">${escapeHtml(part)}</button>`);
+  }
+  return crumbs.join(' / ');
+}
+document.getElementById('fileBreadcrumb').addEventListener('click', e => {
+  const btn = e.target.closest('[data-path]');
+  if (btn) fileBrowse(btn.dataset.path);
+});
+document.getElementById('fileListing').addEventListener('click', e => {
+  const row = e.target.closest('[data-path]');
+  if (!row) return;
+  if (row.dataset.isDir === 'true') fileBrowse(row.dataset.path);
+  else viewFile(row.dataset.path);
+});
+
+async function fileBrowse(path) {
+  document.getElementById('fileViewerCard').hidden = true;
+  document.getElementById('fileBreadcrumb').innerHTML = breadcrumbHtml(path);
+  document.getElementById('fileListing').innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const entries = await api(`/api/guilds/${guildId}/dayz/browse?path=${encodeURIComponent(path)}`);
+    if (entries.length === 0) { document.getElementById('fileListing').innerHTML = `<p class="muted">Empty folder.</p>`; return; }
+    document.getElementById('fileListing').innerHTML = entries.map(e => `
+      <div class="file-row" data-path="${escapeHtml(joinPath(path, e.name))}" data-is-dir="${e.isDirectory}">
+        <span class="fname">${e.isDirectory ? '📁' : '📄'} ${escapeHtml(e.name)}</span>
+        <span class="fmeta">${e.isDirectory ? '' : formatBytes(e.size)}</span>
+      </div>
+    `).join('');
+  } catch (err) {
+    flash('filesMsg', err.message, 'error');
+    document.getElementById('fileListing').innerHTML = '';
+  }
+}
+
+async function viewFile(path) {
+  CURRENT_FILE_PATH = path;
+  document.getElementById('fileViewerCard').hidden = false;
+  document.getElementById('fileViewerName').textContent = path;
+  document.getElementById('fileViewerContent').innerHTML = `<p class="muted">Loading…</p>`;
+  document.getElementById('saveFileBtn').hidden = true;
+  document.getElementById('cancelEditBtn').hidden = true;
+  document.getElementById('editFileBtn').hidden = false;
+  try {
+    const { text, truncated } = await api(`/api/guilds/${guildId}/dayz/file?path=${encodeURIComponent(path)}`);
+    document.getElementById('fileViewerContent').dataset.original = text;
+    document.getElementById('fileViewerContent').innerHTML =
+      (truncated ? '<p class="msg error">File is larger than 500KB — showing the first 500KB only.</p>' : '') +
+      `<pre class="code-block">${escapeHtml(text)}</pre>`;
+  } catch (err) {
+    document.getElementById('fileViewerContent').innerHTML = `<p class="msg error">${escapeHtml(err.message)}</p>`;
+  }
+}
+document.getElementById('editFileBtn').addEventListener('click', () => {
+  const original = document.getElementById('fileViewerContent').dataset.original ?? '';
+  document.getElementById('fileViewerContent').innerHTML = `<textarea id="fileEditArea" rows="18" style="font-family:'Consolas','Courier New',monospace;font-size:12px">${escapeHtml(original)}</textarea>`;
+  document.getElementById('editFileBtn').hidden = true;
+  document.getElementById('saveFileBtn').hidden = false;
+  document.getElementById('cancelEditBtn').hidden = false;
+});
+document.getElementById('cancelEditBtn').addEventListener('click', () => viewFile(CURRENT_FILE_PATH));
+document.getElementById('saveFileBtn').addEventListener('click', async () => {
+  const content = document.getElementById('fileEditArea').value;
+  try {
+    await api(`/api/guilds/${guildId}/dayz/file`, { method: 'PUT', body: { path: CURRENT_FILE_PATH, content } });
+    flash('filesMsg', 'Saved.');
+    viewFile(CURRENT_FILE_PATH);
+  } catch (err) {
+    flash('filesMsg', err.message, 'error');
+  }
+});
+
+// ── Ban list ──
+let BAN_LIST_PATH = null;
+let BAN_ENTRIES = [];
+
+document.getElementById('banPathForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  await loadBanList(new FormData(e.target).get('path').trim());
+});
+
+async function loadBanList(path) {
+  BAN_LIST_PATH = path;
+  document.getElementById('banList').innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const { text } = await api(`/api/guilds/${guildId}/dayz/file?path=${encodeURIComponent(path)}`);
+    BAN_ENTRIES = text.split('\n').map(l => l.trim()).filter(Boolean);
+    renderBanList();
+  } catch (err) {
+    flash('bansMsg', err.message, 'error');
+    document.getElementById('banList').innerHTML = '';
+  }
+}
+function renderBanList() {
+  const el = document.getElementById('banList');
+  if (BAN_ENTRIES.length === 0) { el.innerHTML = `<p class="muted">No entries loaded.</p>`; return; }
+  el.innerHTML = BAN_ENTRIES.map((entry, i) => `
+    <div class="list-item">
+      <span>${escapeHtml(entry)}</span>
+      <div class="actions"><button class="danger" data-idx="${i}" onclick="removeBanEntry(this.dataset.idx)">Remove</button></div>
+    </div>
+  `).join('');
+}
+async function saveBanList() {
+  await api(`/api/guilds/${guildId}/dayz/file`, { method: 'PUT', body: { path: BAN_LIST_PATH, content: BAN_ENTRIES.join('\n') + '\n' } });
+}
+async function removeBanEntry(idx) {
+  BAN_ENTRIES.splice(parseInt(idx, 10), 1);
+  renderBanList();
+  try { await saveBanList(); flash('bansMsg', 'Saved.'); }
+  catch (err) { flash('bansMsg', err.message, 'error'); }
+}
+document.getElementById('addBanForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const entry = fd.get('entry').trim();
+  if (!entry) return;
+  if (!BAN_LIST_PATH) { flash('bansMsg', 'Load a ban file first.', 'error'); return; }
+  BAN_ENTRIES.push(entry);
+  renderBanList();
+  e.target.reset();
+  try { await saveBanList(); flash('bansMsg', 'Added.'); }
+  catch (err) { flash('bansMsg', err.message, 'error'); }
+});
+
 // ─── Init ──────────────────────────────────────────────────────────────────
 
 (async function init() {
@@ -504,6 +718,7 @@ async function deleteWarning(id, userId) {
     loadWarnPunish();
     loadAutomod();
     loadTempbans();
+    loadDayzStatus();
   } catch (err) {
     if (err.status === 401) { window.location.href = 'index.html'; return; }
     document.getElementById('loading').hidden = true;
