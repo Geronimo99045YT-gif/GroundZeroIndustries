@@ -140,6 +140,72 @@ async function removeRule(guildId, category, index) {
   return true;
 }
 
+// ─── Warnings ──────────────────────────────────────────────────────────────────
+
+async function addWarning(guildId, userId, moderatorId, reason) {
+  return sbRequest('POST', '/rest/v1/warnings', { guild_id: guildId, user_id: userId, moderator_id: moderatorId, reason });
+}
+
+async function getWarnings(guildId, userId) {
+  const rows = await sbRequest('GET', `/rest/v1/warnings?guild_id=eq.${guildId}&user_id=eq.${userId}&order=created_at.desc`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function removeWarning(id, guildId) {
+  return sbRequest('DELETE', `/rest/v1/warnings?id=eq.${id}&guild_id=eq.${guildId}`);
+}
+
+async function getWarnPunishConfig(guildId) {
+  const c = await getGuildConfig(guildId);
+  return { threshold: c.warn_threshold ?? null, punishment: c.warn_punishment ?? null, muteMinutes: c.warn_mute_minutes ?? 60 };
+}
+
+async function setWarnPunishConfig(guildId, { threshold, punishment, muteMinutes }) {
+  await saveGuildConfig(guildId, { warn_threshold: threshold, warn_punishment: punishment, warn_mute_minutes: muteMinutes });
+}
+
+// ─── Automod config ──────────────────────────────────────────────────────────
+
+async function getAutomodConfig(guildId) {
+  const c = await getGuildConfig(guildId);
+  return {
+    bannedWords: c.automod_banned_words ? c.automod_banned_words.split(',').map(w => w.trim()).filter(Boolean) : [],
+    blockInvites: c.automod_block_invites ?? false,
+    maxMentions: c.automod_max_mentions ?? null,
+    blockCaps: c.automod_block_caps ?? false,
+  };
+}
+
+async function setAutomodConfig(guildId, updates) {
+  const patch = {};
+  if ('bannedWords' in updates) patch.automod_banned_words = updates.bannedWords.join(',');
+  if ('blockInvites' in updates) patch.automod_block_invites = updates.blockInvites;
+  if ('maxMentions' in updates) patch.automod_max_mentions = updates.maxMentions;
+  if ('blockCaps' in updates) patch.automod_block_caps = updates.blockCaps;
+  await saveGuildConfig(guildId, patch);
+}
+
+// ─── Temp-bans ─────────────────────────────────────────────────────────────────
+
+async function addTempBan(guildId, userId, unbanAt, reason) {
+  return sbRequest('POST', '/rest/v1/temp_bans', { guild_id: guildId, user_id: userId, unban_at: unbanAt, reason });
+}
+
+async function getDueTempBans() {
+  const now = new Date().toISOString();
+  const rows = await sbRequest('GET', `/rest/v1/temp_bans?unban_at=lt.${now}`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function removeTempBan(id) {
+  return sbRequest('DELETE', `/rest/v1/temp_bans?id=eq.${id}`);
+}
+
+async function getActiveTempBans(guildId) {
+  const rows = await sbRequest('GET', `/rest/v1/temp_bans?guild_id=eq.${guildId}&order=unban_at`);
+  return Array.isArray(rows) ? rows : [];
+}
+
 // ─── Scheduler data ────────────────────────────────────────────────────────────
 
 const DAY_NAMES = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
@@ -247,6 +313,10 @@ module.exports = {
   getReportsChannel, setReportsChannel,
   getHoneypotChannel, setHoneypotChannel,
   getRules, addRule, removeRule,
+  addWarning, getWarnings, removeWarning,
+  getWarnPunishConfig, setWarnPunishConfig,
+  getAutomodConfig, setAutomodConfig,
+  addTempBan, getDueTempBans, removeTempBan, getActiveTempBans,
   DAY_NAMES, getSchedules, createSchedule, deleteSchedule,
   createGiveaway, getActiveGiveaways, getGiveawayEntries,
   getGiveawayById, getGiveawayByMessageId, markGiveawayEnded,

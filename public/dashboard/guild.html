@@ -27,6 +27,7 @@
       <button class="tab-btn" data-tab="serverinfo">Server Info</button>
       <button class="tab-btn" data-tab="channels">Channels &amp; Roles</button>
       <button class="tab-btn" data-tab="rules">Rules</button>
+      <button class="tab-btn" data-tab="moderation">Moderation</button>
       <button class="tab-btn" data-tab="trashtalk">Trash Talk</button>
       <button class="tab-btn" data-tab="schedules">Schedules</button>
       <button class="tab-btn" data-tab="giveaways">Giveaways</button>
@@ -98,6 +99,99 @@
         <div style="margin-top:14px">
           <button class="btn" id="postRulesBtn">Post / Refresh Rules Channel</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Moderation -->
+    <div class="tab-panel" id="tab-moderation">
+      <div class="card">
+        <h2>Purge Messages</h2>
+        <div id="purgeMsg" class="msg hidden"></div>
+        <form id="purgeForm">
+          <div class="grid cols-3">
+            <div class="field"><label>Channel</label><select name="channelId" required></select></div>
+            <div class="field"><label>Amount (max 100)</label><input name="amount" type="number" min="1" max="100" value="10" required></div>
+            <div class="field"><label>Only from user ID (optional)</label><input name="userId"></div>
+          </div>
+          <button class="danger" type="submit">Delete Messages</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Slowmode &amp; Channel Lock</h2>
+        <div id="lockMsg" class="msg hidden"></div>
+        <div class="grid cols-2">
+          <div class="field"><label>Channel</label><select id="modChannelSelect"></select></div>
+          <div class="field"><label>Slowmode seconds (0 = off)</label><input id="slowmodeSeconds" type="number" min="0" max="21600" value="0"></div>
+        </div>
+        <div class="row">
+          <button type="button" id="setSlowmodeBtn">Set Slowmode</button>
+          <button type="button" class="danger" id="lockBtn">Lock Channel</button>
+          <button type="button" id="unlockBtn">Unlock Channel</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Softban / Temp-ban</h2>
+        <div id="banMsg" class="msg hidden"></div>
+        <form id="softbanForm" class="row">
+          <div class="field"><label>User ID</label><input name="userId" required></div>
+          <div class="field" style="flex:2"><label>Reason</label><input name="reason"></div>
+          <button class="btn" type="submit" style="flex:0 0 auto">Softban</button>
+        </form>
+        <form id="tempbanForm" class="row">
+          <div class="field"><label>User ID</label><input name="userId" required></div>
+          <div class="field"><label>Duration (minutes)</label><input name="durationMins" type="number" min="1" required></div>
+          <div class="field" style="flex:2"><label>Reason</label><input name="reason"></div>
+          <button class="danger" type="submit" style="flex:0 0 auto">Temp-ban</button>
+        </form>
+        <div id="tempbansList" class="muted" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <h2>Warning Auto-Punishment</h2>
+        <div id="warnPunishMsg" class="msg hidden"></div>
+        <form id="warnPunishForm">
+          <div class="grid cols-3">
+            <div class="field"><label>Threshold (0 = disable)</label><input name="threshold" type="number" min="0" value="0"></div>
+            <div class="field"><label>Punishment</label>
+              <select name="punishment">
+                <option value="">— none —</option>
+                <option value="mute">Mute</option>
+                <option value="kick">Kick</option>
+                <option value="ban">Ban</option>
+              </select>
+            </div>
+            <div class="field"><label>Mute duration (minutes)</label><input name="muteMinutes" type="number" min="1" value="60"></div>
+          </div>
+          <button class="primary" type="submit">Save</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Automod Filters</h2>
+        <div id="automodMsg" class="msg hidden"></div>
+        <div id="bannedWordsList"></div>
+        <form id="bannedWordForm" class="row">
+          <div class="field"><label>Add banned word/phrase</label><input name="word" required></div>
+          <button class="btn" type="submit" style="flex:0 0 auto">Add</button>
+        </form>
+        <div class="section-title">Other filters</div>
+        <div class="grid cols-2">
+          <div class="checkbox-row"><input type="checkbox" id="blockInvitesToggle"><label style="margin:0" for="blockInvitesToggle">Block Discord invite links</label></div>
+          <div class="checkbox-row"><input type="checkbox" id="blockCapsToggle"><label style="margin:0" for="blockCapsToggle">Block excessive caps</label></div>
+        </div>
+        <div class="field" style="max-width:280px;margin-top:12px"><label>Max mentions per message (0 = off)</label><input id="maxMentionsInput" type="number" min="0" value="0"></div>
+        <button class="primary" type="button" id="saveAutomodBtn" style="margin-top:12px">Save Automod Settings</button>
+      </div>
+
+      <div class="card">
+        <h2>Look Up Warnings</h2>
+        <form id="warningsLookupForm" class="row">
+          <div class="field"><label>Discord User ID</label><input name="userId" required></div>
+          <button class="primary" type="submit" style="flex:0 0 auto">Look Up</button>
+        </form>
+        <div id="warningsResult"></div>
       </div>
     </div>
 

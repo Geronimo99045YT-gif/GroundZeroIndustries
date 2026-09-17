@@ -46,6 +46,8 @@ const {
   getReportsChannel, setReportsChannel,
   getHoneypotChannel, setHoneypotChannel,
   getRules, addRule, removeRule,
+  getWarnPunishConfig, setWarnPunishConfig,
+  getAutomodConfig, setAutomodConfig,
   DAY_NAMES, getSchedules,
   createGiveaway, getActiveGiveaways, getGiveawayEntries,
   getPlayerStats, savePlayerStats,
@@ -152,6 +154,9 @@ async function checkGiveaways() {
   } catch {}
 }
 setInterval(checkGiveaways, 30 * 1000);
+
+// Check for expired temp-bans every 60 seconds
+setInterval(() => { actions.checkTempBans().catch(() => {}); }, 60 * 1000);
 
 // ─── Ground Zero POI Data ────────────────────────────────────────────────────
 
@@ -856,6 +861,99 @@ const commands = [
     .setName('honeypot')
     .setDescription('Show the current honeypot trap channel')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('sync')
+    .setDescription("Force-refresh the bot's channel/role cache (fixes stale dropdowns on the dashboard)")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  // ── Warnings ─────────────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('warnings')
+    .setDescription("View a member's warning history")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .addUserOption(o => o.setName('user').setDescription('Member to check').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('delwarning')
+    .setDescription('Remove a specific warning by ID (see /warnings)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .addIntegerOption(o => o.setName('id').setDescription('Warning ID').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('setwarnpunish')
+    .setDescription('Configure auto-punishment after N warnings')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addIntegerOption(o => o.setName('threshold').setDescription('Warnings needed to trigger (0 = disable)').setRequired(true).setMinValue(0))
+    .addStringOption(o => o.setName('action').setDescription('Punishment to apply').addChoices(
+      { name: 'Mute', value: 'mute' }, { name: 'Kick', value: 'kick' }, { name: 'Ban', value: 'ban' },
+    ))
+    .addIntegerOption(o => o.setName('mute_minutes').setDescription('Mute duration in minutes (if action = Mute)').setMinValue(1)),
+
+  // ── Channel & message tools ──────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('purge')
+    .setDescription('Bulk-delete recent messages in this channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .addIntegerOption(o => o.setName('amount').setDescription('How many messages (max 100)').setRequired(true).setMinValue(1).setMaxValue(100))
+    .addUserOption(o => o.setName('user').setDescription('Only delete messages from this user')),
+
+  new SlashCommandBuilder()
+    .setName('slowmode')
+    .setDescription('Set slowmode on a channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+    .addIntegerOption(o => o.setName('seconds').setDescription('Seconds between messages (0 = off, max 21600)').setRequired(true).setMinValue(0).setMaxValue(21600))
+    .addChannelOption(o => o.setName('channel').setDescription('Channel (defaults to current)').addChannelTypes(ChannelType.GuildText)),
+
+  new SlashCommandBuilder()
+    .setName('lock')
+    .setDescription('Stop everyone sending messages in a channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+    .addChannelOption(o => o.setName('channel').setDescription('Channel (defaults to current)').addChannelTypes(ChannelType.GuildText))
+    .addStringOption(o => o.setName('reason').setDescription('Reason')),
+
+  new SlashCommandBuilder()
+    .setName('unlock')
+    .setDescription('Restore sending messages in a locked channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+    .addChannelOption(o => o.setName('channel').setDescription('Channel (defaults to current)').addChannelTypes(ChannelType.GuildText)),
+
+  // ── Softban / tempban ────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('softban')
+    .setDescription('Ban then immediately unban — wipes recent messages, they can rejoin')
+    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+    .addUserOption(o => o.setName('user').setDescription('User to softban').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason')),
+
+  new SlashCommandBuilder()
+    .setName('tempban')
+    .setDescription('Ban a user for a set amount of time, then auto-unban')
+    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+    .addUserOption(o => o.setName('user').setDescription('User to ban').setRequired(true))
+    .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes').setRequired(true).setMinValue(1).setMaxValue(129600))
+    .addStringOption(o => o.setName('reason').setDescription('Reason')),
+
+  // ── Automod ───────────────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('automod')
+    .setDescription('Configure automod filters')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(sub => sub.setName('status').setDescription('Show current automod settings'))
+    .addSubcommand(sub => sub.setName('bannedword-add').setDescription('Add a banned word/phrase')
+      .addStringOption(o => o.setName('word').setDescription('Word or phrase to ban').setRequired(true)))
+    .addSubcommand(sub => sub.setName('bannedword-remove').setDescription('Remove a banned word/phrase')
+      .addStringOption(o => o.setName('word').setDescription('Word or phrase to remove').setRequired(true)))
+    .addSubcommand(sub => sub.setName('invites').setDescription('Block Discord invite links')
+      .addBooleanOption(o => o.setName('enabled').setDescription('On or off').setRequired(true)))
+    .addSubcommand(sub => sub.setName('mentions').setDescription('Block messages with too many mentions')
+      .addIntegerOption(o => o.setName('max').setDescription('Max mentions allowed (0 = disable filter)').setRequired(true).setMinValue(0)))
+    .addSubcommand(sub => sub.setName('caps').setDescription('Block excessive-caps messages')
+      .addBooleanOption(o => o.setName('enabled').setDescription('On or off').setRequired(true))),
 
 ].map(c => c.toJSON());
 
@@ -1768,7 +1866,13 @@ React with 🎉 to enter!`)
     const target = interaction.options.getMember('user');
     const reason = interaction.options.getString('reason');
     if (!target) return interaction.reply({ content: 'Member not found.', ephemeral: true });
-    const embed = modEmbed('⚠️ Member Warned', Colors.Yellow, target, user, reason);
+
+    const { count, punishment } = await actions.recordWarning(guild, target, user.id, reason);
+
+    const embed = modEmbed('⚠️ Member Warned', Colors.Yellow, target, user, reason, [
+      { name: '📊 Total Warnings', value: `${count}`, inline: true },
+      ...(punishment ? [{ name: '🔨 Auto-Punishment', value: punishment, inline: true }] : []),
+    ]);
     await interaction.reply({ embeds: [embed] });
     await sendLog(guild, embed);
     target.send({
@@ -1779,8 +1883,9 @@ React with 🎉 to enter!`)
           .setDescription(`You received a warning in **${guild.name}**.`)
           .addFields(
             { name: '📝 Reason', value: reason },
+            { name: '📊 Total Warnings', value: `${count}` },
           )
-          .setFooter({ text: 'Further rule violations may result in a mute or ban.' })
+          .setFooter({ text: punishment ? `This warning resulted in: ${punishment}` : 'Further rule violations may result in a mute or ban.' })
           .setTimestamp(),
       ],
     }).catch(() => {});
@@ -1845,6 +1950,194 @@ React with 🎉 to enter!`)
            .setDescription('No honeypot channel configured. Use `/sethoneypot` to set one up.');
     }
     await interaction.reply({ embeds: [embed], ephemeral: true });
+
+  // /sync
+  } else if (commandName === 'sync') {
+    await interaction.deferReply({ ephemeral: true });
+    await guild.channels.fetch();
+    await guild.roles.fetch();
+    await interaction.editReply({ content: '🔄 Channels and roles refreshed from Discord. Reload the dashboard to see the latest.' });
+
+  // /warnings
+  } else if (commandName === 'warnings') {
+    const target = interaction.options.getUser('user');
+    const list = await db.getWarnings(guild.id, target.id);
+    if (list.length === 0) {
+      await interaction.reply({ content: `${target.username} has no warnings.`, ephemeral: true });
+      return;
+    }
+    const embed = new EmbedBuilder()
+      .setTitle(`⚠️  Warnings for ${target.username} (${list.length})`)
+      .setColor(0xFEE75C)
+      .setDescription(list.map(w =>
+        `**#${w.id}** — ${w.reason}\n<@${w.moderator_id}> · <t:${Math.floor(new Date(w.created_at).getTime() / 1000)}:R>`
+      ).join('\n\n').slice(0, 4000))
+      .setTimestamp();
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+  // /delwarning
+  } else if (commandName === 'delwarning') {
+    const id = interaction.options.getInteger('id');
+    await db.removeWarning(id, guild.id);
+    await interaction.reply({ content: `Warning #${id} removed.`, ephemeral: true });
+
+  // /setwarnpunish
+  } else if (commandName === 'setwarnpunish') {
+    const threshold = interaction.options.getInteger('threshold');
+    const action = interaction.options.getString('action');
+    const muteMinutes = interaction.options.getInteger('mute_minutes') ?? 60;
+    if (threshold === 0) {
+      await setWarnPunishConfig(guild.id, { threshold: null, punishment: null, muteMinutes });
+      await interaction.reply({ content: 'Auto-punishment disabled.', ephemeral: true });
+      return;
+    }
+    if (!action) {
+      await interaction.reply({ content: 'Choose an action (Mute/Kick/Ban) when setting a threshold above 0.', ephemeral: true });
+      return;
+    }
+    await setWarnPunishConfig(guild.id, { threshold, punishment: action, muteMinutes });
+    await interaction.reply({
+      content: `Members will now be **${action}ed** after **${threshold}** warning(s)${action === 'mute' ? ` (${muteMinutes}m)` : ''}.`,
+      ephemeral: true,
+    });
+
+  // /purge
+  } else if (commandName === 'purge') {
+    const amount = interaction.options.getInteger('amount');
+    const targetUser = interaction.options.getUser('user');
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const deleted = await actions.purgeMessages(interaction.channel, amount, targetUser?.id ?? null);
+      await interaction.editReply({ content: `🧹 Deleted ${deleted} message(s).` });
+    } catch (e) {
+      await interaction.editReply({ content: `Failed: ${e.message}` });
+    }
+
+  // /slowmode
+  } else if (commandName === 'slowmode') {
+    const seconds = interaction.options.getInteger('seconds');
+    const channel = interaction.options.getChannel('channel') ?? interaction.channel;
+    try {
+      await actions.setSlowmode(channel, seconds);
+      await interaction.reply({ content: seconds > 0 ? `🐌 Slowmode set to ${seconds}s in ${channel}.` : `Slowmode disabled in ${channel}.`, ephemeral: true });
+    } catch (e) {
+      await interaction.reply({ content: `Failed: ${e.message}`, ephemeral: true });
+    }
+
+  // /lock
+  } else if (commandName === 'lock') {
+    const channel = interaction.options.getChannel('channel') ?? interaction.channel;
+    const reason  = interaction.options.getString('reason') ?? 'No reason provided';
+    try {
+      await actions.lockChannel(channel, reason);
+      await interaction.reply({ content: `🔒 ${channel} locked.` });
+    } catch (e) {
+      await interaction.reply({ content: `Failed: ${e.message}`, ephemeral: true });
+    }
+
+  // /unlock
+  } else if (commandName === 'unlock') {
+    const channel = interaction.options.getChannel('channel') ?? interaction.channel;
+    try {
+      await actions.unlockChannel(channel, `Unlocked by ${user.tag}`);
+      await interaction.reply({ content: `🔓 ${channel} unlocked.` });
+    } catch (e) {
+      await interaction.reply({ content: `Failed: ${e.message}`, ephemeral: true });
+    }
+
+  // /softban
+  } else if (commandName === 'softban') {
+    const target = interaction.options.getUser('user');
+    const reason = interaction.options.getString('reason') ?? 'No reason provided';
+    await interaction.deferReply();
+    try {
+      await actions.softban(guild, target.id, reason);
+      const embed = new EmbedBuilder()
+        .setTitle('🔨 Member Softbanned')
+        .setColor(Colors.Orange)
+        .addFields(
+          { name: '👤 User', value: `<@${target.id}>`, inline: true },
+          { name: '🛡️ Moderator', value: `<@${user.id}>`, inline: true },
+          { name: '📝 Reason', value: reason },
+        )
+        .setFooter({ text: 'Recent messages wiped — user can rejoin.' })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      await sendLog(guild, embed);
+    } catch (e) {
+      await interaction.editReply({ content: `Failed: ${e.message}` });
+    }
+
+  // /tempban
+  } else if (commandName === 'tempban') {
+    const target   = interaction.options.getUser('user');
+    const duration = interaction.options.getInteger('duration');
+    const reason   = interaction.options.getString('reason') ?? 'No reason provided';
+    await interaction.deferReply();
+    try {
+      await actions.tempBan(guild, target.id, reason, duration);
+      const embed = new EmbedBuilder()
+        .setTitle('⏳ Member Temp-Banned')
+        .setColor(Colors.Red)
+        .addFields(
+          { name: '👤 User', value: `<@${target.id}>`, inline: true },
+          { name: '🛡️ Moderator', value: `<@${user.id}>`, inline: true },
+          { name: '⏰ Duration', value: `${duration} minute(s)`, inline: true },
+          { name: '📝 Reason', value: reason },
+        )
+        .setFooter({ text: 'Auto-unbans when the timer runs out.' })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      await sendLog(guild, embed);
+    } catch (e) {
+      await interaction.editReply({ content: `Failed: ${e.message}` });
+    }
+
+  // /automod
+  } else if (commandName === 'automod') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'status') {
+      const cfg = await getAutomodConfig(guild.id);
+      const embed = new EmbedBuilder()
+        .setTitle('🛡️  Automod Settings')
+        .setColor(0x5865F2)
+        .addFields(
+          { name: 'Banned Words', value: cfg.bannedWords.length ? cfg.bannedWords.map(w => `\`${w}\``).join(', ') : 'None', inline: false },
+          { name: 'Block Invites', value: cfg.blockInvites ? 'On' : 'Off', inline: true },
+          { name: 'Max Mentions', value: cfg.maxMentions ? `${cfg.maxMentions}` : 'Off', inline: true },
+          { name: 'Block Caps', value: cfg.blockCaps ? 'On' : 'Off', inline: true },
+        )
+        .setTimestamp();
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+
+    } else if (sub === 'bannedword-add') {
+      const word = interaction.options.getString('word').trim().toLowerCase();
+      const cfg = await getAutomodConfig(guild.id);
+      if (!cfg.bannedWords.includes(word)) cfg.bannedWords.push(word);
+      await setAutomodConfig(guild.id, { bannedWords: cfg.bannedWords });
+      await interaction.reply({ content: `Added \`${word}\` to the banned words list.`, ephemeral: true });
+
+    } else if (sub === 'bannedword-remove') {
+      const word = interaction.options.getString('word').trim().toLowerCase();
+      const cfg = await getAutomodConfig(guild.id);
+      await setAutomodConfig(guild.id, { bannedWords: cfg.bannedWords.filter(w => w !== word) });
+      await interaction.reply({ content: `Removed \`${word}\` from the banned words list.`, ephemeral: true });
+
+    } else if (sub === 'invites') {
+      const enabled = interaction.options.getBoolean('enabled');
+      await setAutomodConfig(guild.id, { blockInvites: enabled });
+      await interaction.reply({ content: `Invite-link blocking is now **${enabled ? 'ON' : 'OFF'}**.`, ephemeral: true });
+
+    } else if (sub === 'mentions') {
+      const max = interaction.options.getInteger('max');
+      await setAutomodConfig(guild.id, { maxMentions: max || null });
+      await interaction.reply({ content: max > 0 ? `Mass-mention filter set to max **${max}** mentions.` : 'Mass-mention filter disabled.', ephemeral: true });
+
+    } else if (sub === 'caps') {
+      const enabled = interaction.options.getBoolean('enabled');
+      await setAutomodConfig(guild.id, { blockCaps: enabled });
+      await interaction.reply({ content: `Excessive-caps filter is now **${enabled ? 'ON' : 'OFF'}**.`, ephemeral: true });
+    }
   }
 });
 
@@ -2181,6 +2474,43 @@ function resetCooldown(state, guildId) {
   }, COOLDOWN_MS);
 }
 
+// ─── Automod ────────────────────────────────────────────────────────────────
+
+const INVITE_LINK_REGEX = /(discord\.gg|discord(?:app)?\.com\/invite)\/[a-zA-Z0-9-]+/i;
+
+async function checkAutomod(message) {
+  const text = message.content;
+  if (!text) return false;
+
+  const cfg = await getAutomodConfig(message.guild.id);
+  let violation = null;
+
+  if (cfg.bannedWords.length && cfg.bannedWords.some(w => text.toLowerCase().includes(w))) {
+    violation = 'a banned word';
+  } else if (cfg.blockInvites && INVITE_LINK_REGEX.test(text)) {
+    violation = 'a Discord invite link';
+  } else if (cfg.maxMentions && (message.mentions.users.size + message.mentions.roles.size) > cfg.maxMentions) {
+    violation = 'mass mentions';
+  } else if (cfg.blockCaps && text.length >= 10) {
+    const letters = text.replace(/[^a-zA-Z]/g, '');
+    const caps    = text.replace(/[^A-Z]/g, '');
+    if (letters.length >= 10 && caps.length / letters.length > 0.7) violation = 'excessive caps';
+  }
+
+  if (!violation) return false;
+
+  await message.delete().catch(() => {});
+  const embed = new EmbedBuilder()
+    .setTitle('🛡️  Automod — Message Removed')
+    .setColor(0xED4245)
+    .setDescription(`<@${message.author.id}>'s message in <#${message.channel.id}> was removed for **${violation}**.`)
+    .addFields({ name: '📝 Message', value: text.slice(0, 300) || '*(empty)*' })
+    .setFooter({ text: `User ID: ${message.author.id}` })
+    .setTimestamp();
+  await sendLog(message.guild, embed);
+  return true;
+}
+
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
   if (!message.guild)     return;
@@ -2227,6 +2557,9 @@ client.on('messageCreate', async message => {
     }
     return; // Stop all further processing
   }
+
+  // ── Automod ───────────────────────────────────────────────────────────────
+  if (await checkAutomod(message)) return;
 
   // ── Track message for player stats ──────────────────────────────────────
   if (SUPABASE_URL && SUPABASE_KEY) {

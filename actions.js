@@ -326,6 +326,83 @@ async function getOrRefreshStyleAnalysis(guildId, userId) {
   return { stats, analysis };
 }
 
+// ─── Warnings & auto-punishment ────────────────────────────────────────────────
+// Shared by the /warn command and (in future) the dashboard, so the threshold
+// check only lives in one place.
+
+async function recordWarning(guild, member, moderatorId, reason) {
+  await db.addWarning(guild.id, member.id, moderatorId, reason);
+  const warnings = await db.getWarnings(guild.id, member.id);
+  const cfg = await db.getWarnPunishConfig(guild.id);
+
+  let punishment = null;
+  if (cfg.threshold && cfg.punishment && warnings.length >= cfg.threshold) {
+    try {
+      if (cfg.punishment === 'mute' && member.moderatable) {
+        await member.timeout(cfg.muteMinutes * 60 * 1000, `Auto-punish: reached ${cfg.threshold} warnings`);
+        punishment = `muted for ${cfg.muteMinutes}m`;
+      } else if (cfg.punishment === 'kick' && member.kickable) {
+        await member.kick(`Auto-punish: reached ${cfg.threshold} warnings`);
+        punishment = 'kicked';
+      } else if (cfg.punishment === 'ban' && member.bannable) {
+        await member.ban({ reason: `Auto-punish: reached ${cfg.threshold} warnings` });
+        punishment = 'banned';
+      }
+    } catch (err) { console.error('Warn auto-punish failed:', err.message); }
+  }
+  return { count: warnings.length, punishment };
+}
+
+// ─── Purge ─────────────────────────────────────────────────────────────────────
+
+async function purgeMessages(channel, amount, userId = null) {
+  const capped = Math.min(Math.max(parseInt(amount, 10) || 0, 1), 100);
+  const fetched = await channel.messages.fetch({ limit: userId ? 100 : capped });
+  let toDelete = [...fetched.values()];
+  if (userId) toDelete = toDelete.filter(m => m.author.id === userId);
+  toDelete = toDelete.slice(0, capped);
+  if (toDelete.length === 0) return 0;
+  const deleted = await channel.bulkDelete(toDelete, true); // true = skip messages older than 14 days
+  return deleted.size;
+}
+
+// ─── Slowmode / lock / unlock ──────────────────────────────────────────────────
+
+async function setSlowmode(channel, seconds) {
+  await channel.setRateLimitPerUser(Math.min(Math.max(seconds, 0), 21600));
+}
+
+async function lockChannel(channel, reason) {
+  await channel.permissionOverwrites.edit(channel.guild.roles.everyone, { SendMessages: false }, { reason });
+}
+
+async function unlockChannel(channel, reason) {
+  await channel.permissionOverwrites.edit(channel.guild.roles.everyone, { SendMessages: null }, { reason });
+}
+
+// ─── Softban & temp-ban ─────────────────────────────────────────────────────────
+
+async function softban(guild, userId, reason) {
+  await guild.members.ban(userId, { reason: `Softban: ${reason}`, deleteMessageSeconds: 7 * 24 * 60 * 60 });
+  await guild.members.unban(userId, 'Softban — auto unban to allow rejoin').catch(() => {});
+}
+
+async function tempBan(guild, userId, reason, durationMins) {
+  await guild.members.ban(userId, { reason: `Tempban (${durationMins}m): ${reason}` });
+  const unbanAt = new Date(Date.now() + durationMins * 60 * 1000).toISOString();
+  await db.addTempBan(guild.id, userId, unbanAt, reason);
+}
+
+// Sweeps expired temp-bans and unbans them. Called on an interval from index.js.
+async function checkTempBans() {
+  const due = await db.getDueTempBans();
+  for (const tb of due) {
+    const guild = client?.guilds.cache.get(tb.guild_id);
+    if (guild) await guild.members.unban(tb.user_id, 'Temp-ban expired').catch(() => {});
+    await db.removeTempBan(tb.id);
+  }
+}
+
 module.exports = {
   setClient,
   buildRulesEmbeds, postRulesToChannel,
@@ -333,4 +410,7 @@ module.exports = {
   postHoneypotWarning,
   createGiveaway, endGiveaway, rerollGiveaway,
   generateStyleAnalysis, getOrRefreshStyleAnalysis,
+  recordWarning,
+  purgeMessages, setSlowmode, lockChannel, unlockChannel,
+  softban, tempBan, checkTempBans,
 };

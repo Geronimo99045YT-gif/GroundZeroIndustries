@@ -310,6 +310,167 @@ async function lookupStats(userId) {
   }
 }
 
+// ─── Moderation ──────────────────────────────────────────────────────────────
+
+document.getElementById('purgeForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    const r = await api(`/api/guilds/${guildId}/moderation/purge`, {
+      method: 'POST',
+      body: { channelId: fd.get('channelId'), amount: fd.get('amount'), userId: fd.get('userId') || null },
+    });
+    flash('purgeMsg', `Deleted ${r.deleted} message(s).`);
+  } catch (err) { flash('purgeMsg', err.message, 'error'); }
+});
+
+document.getElementById('setSlowmodeBtn').addEventListener('click', async () => {
+  const channelId = document.getElementById('modChannelSelect').value;
+  const seconds = document.getElementById('slowmodeSeconds').value;
+  if (!channelId) return flash('lockMsg', 'Choose a channel first.', 'error');
+  try {
+    await api(`/api/guilds/${guildId}/moderation/slowmode`, { method: 'POST', body: { channelId, seconds } });
+    flash('lockMsg', 'Slowmode updated.');
+  } catch (err) { flash('lockMsg', err.message, 'error'); }
+});
+document.getElementById('lockBtn').addEventListener('click', async () => {
+  const channelId = document.getElementById('modChannelSelect').value;
+  if (!channelId) return flash('lockMsg', 'Choose a channel first.', 'error');
+  try {
+    await api(`/api/guilds/${guildId}/moderation/lock`, { method: 'POST', body: { channelId } });
+    flash('lockMsg', 'Channel locked.');
+  } catch (err) { flash('lockMsg', err.message, 'error'); }
+});
+document.getElementById('unlockBtn').addEventListener('click', async () => {
+  const channelId = document.getElementById('modChannelSelect').value;
+  if (!channelId) return flash('lockMsg', 'Choose a channel first.', 'error');
+  try {
+    await api(`/api/guilds/${guildId}/moderation/unlock`, { method: 'POST', body: { channelId } });
+    flash('lockMsg', 'Channel unlocked.');
+  } catch (err) { flash('lockMsg', err.message, 'error'); }
+});
+
+document.getElementById('softbanForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    await api(`/api/guilds/${guildId}/moderation/softban`, { method: 'POST', body: { userId: fd.get('userId'), reason: fd.get('reason') } });
+    e.target.reset();
+    flash('banMsg', 'User softbanned.');
+  } catch (err) { flash('banMsg', err.message, 'error'); }
+});
+document.getElementById('tempbanForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    await api(`/api/guilds/${guildId}/moderation/tempban`, {
+      method: 'POST',
+      body: { userId: fd.get('userId'), durationMins: fd.get('durationMins'), reason: fd.get('reason') },
+    });
+    e.target.reset();
+    flash('banMsg', 'User temp-banned.');
+    loadTempbans();
+  } catch (err) { flash('banMsg', err.message, 'error'); }
+});
+async function loadTempbans() {
+  const list = await api(`/api/guilds/${guildId}/moderation/tempbans`);
+  const el = document.getElementById('tempbansList');
+  if (list.length === 0) { el.textContent = 'No active temp-bans.'; return; }
+  el.innerHTML = 'Active temp-bans: ' + list.map(t => `${escapeHtml(t.user_id)} (unbans ${timeAgo(t.unban_at)})`).join(', ');
+}
+
+document.getElementById('warnPunishForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    await api(`/api/guilds/${guildId}/warnpunish`, {
+      method: 'PUT',
+      body: { threshold: fd.get('threshold'), punishment: fd.get('punishment'), muteMinutes: fd.get('muteMinutes') },
+    });
+    flash('warnPunishMsg', 'Saved.');
+  } catch (err) { flash('warnPunishMsg', err.message, 'error'); }
+});
+async function loadWarnPunish() {
+  const cfg = await api(`/api/guilds/${guildId}/warnpunish`);
+  const f = document.getElementById('warnPunishForm');
+  f.threshold.value = cfg.threshold ?? 0;
+  f.punishment.value = cfg.punishment ?? '';
+  f.muteMinutes.value = cfg.muteMinutes ?? 60;
+}
+
+let AUTOMOD_WORDS = [];
+async function loadAutomod() {
+  const cfg = await api(`/api/guilds/${guildId}/automod`);
+  AUTOMOD_WORDS = cfg.bannedWords;
+  renderBannedWords();
+  document.getElementById('blockInvitesToggle').checked = !!cfg.blockInvites;
+  document.getElementById('blockCapsToggle').checked = !!cfg.blockCaps;
+  document.getElementById('maxMentionsInput').value = cfg.maxMentions ?? 0;
+}
+function renderBannedWords() {
+  const el = document.getElementById('bannedWordsList');
+  el.innerHTML = AUTOMOD_WORDS.length === 0
+    ? `<p class="muted">No banned words yet.</p>`
+    : AUTOMOD_WORDS.map(w => `
+        <div class="list-item"><span>${escapeHtml(w)}</span>
+          <div class="actions"><button class="danger" data-word="${escapeHtml(w)}" onclick="removeBannedWord(this.dataset.word)">Remove</button></div>
+        </div>`).join('');
+}
+async function removeBannedWord(word) {
+  AUTOMOD_WORDS = AUTOMOD_WORDS.filter(w => w !== word);
+  renderBannedWords();
+  try { await api(`/api/guilds/${guildId}/automod`, { method: 'PUT', body: { bannedWords: AUTOMOD_WORDS } }); }
+  catch (err) { flash('automodMsg', err.message, 'error'); }
+}
+document.getElementById('bannedWordForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const word = fd.get('word').trim().toLowerCase();
+  if (word && !AUTOMOD_WORDS.includes(word)) AUTOMOD_WORDS.push(word);
+  renderBannedWords();
+  e.target.reset();
+  try { await api(`/api/guilds/${guildId}/automod`, { method: 'PUT', body: { bannedWords: AUTOMOD_WORDS } }); }
+  catch (err) { flash('automodMsg', err.message, 'error'); }
+});
+document.getElementById('saveAutomodBtn').addEventListener('click', async () => {
+  try {
+    await api(`/api/guilds/${guildId}/automod`, {
+      method: 'PUT',
+      body: {
+        blockInvites: document.getElementById('blockInvitesToggle').checked,
+        blockCaps: document.getElementById('blockCapsToggle').checked,
+        maxMentions: parseInt(document.getElementById('maxMentionsInput').value, 10) || 0,
+      },
+    });
+    flash('automodMsg', 'Automod settings saved.');
+  } catch (err) { flash('automodMsg', err.message, 'error'); }
+});
+
+document.getElementById('warningsLookupForm').addEventListener('submit', e => {
+  e.preventDefault();
+  lookupWarnings(new FormData(e.target).get('userId').trim());
+});
+async function lookupWarnings(userId) {
+  const el = document.getElementById('warningsResult');
+  el.innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const list = await api(`/api/guilds/${guildId}/warnings/${userId}`);
+    if (list.length === 0) { el.innerHTML = `<p class="muted">No warnings for that user.</p>`; return; }
+    el.innerHTML = list.map(w => `
+      <div class="list-item">
+        <div><div>${escapeHtml(w.reason)}</div><div class="meta">#${w.id} · by ${escapeHtml(w.moderator_id)} · ${timeAgo(w.created_at)}</div></div>
+        <div class="actions"><button class="danger" data-id="${w.id}" data-user="${escapeHtml(userId)}" onclick="deleteWarning(this.dataset.id, this.dataset.user)">Remove</button></div>
+      </div>
+    `).join('');
+  } catch (err) {
+    el.innerHTML = `<p class="msg error">${escapeHtml(err.message)}</p>`;
+  }
+}
+async function deleteWarning(id, userId) {
+  try { await api(`/api/guilds/${guildId}/warnings/${id}`, { method: 'DELETE' }); lookupWarnings(userId); }
+  catch (err) { alert(err.message); }
+}
+
 // ─── Init ──────────────────────────────────────────────────────────────────
 
 (async function init() {
@@ -330,6 +491,8 @@ async function lookupStats(userId) {
 
     document.getElementById('scheduleForm').channelId.innerHTML = channelOptions(null);
     document.getElementById('giveawayForm').channelId.innerHTML = channelOptions(null);
+    document.getElementById('purgeForm').channelId.innerHTML = channelOptions(null);
+    document.getElementById('modChannelSelect').innerHTML = channelOptions(null);
 
     document.getElementById('loading').hidden = true;
     document.getElementById('app').hidden = false;
@@ -338,6 +501,9 @@ async function lookupStats(userId) {
     loadSchedules();
     loadGiveaways();
     loadTopStats();
+    loadWarnPunish();
+    loadAutomod();
+    loadTempbans();
   } catch (err) {
     if (err.status === 401) { window.location.href = 'index.html'; return; }
     document.getElementById('loading').hidden = true;

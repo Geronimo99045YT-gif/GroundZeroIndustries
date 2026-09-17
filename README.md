@@ -32,7 +32,7 @@ A Discord bot built for DayZ console (Xbox) communities. Includes a loot finder 
    - ✅ **Message Content Intent**
 5. Go to **OAuth2 → URL Generator**:
    - Scopes: tick `bot` and `applications.commands`
-   - Bot Permissions: tick `Kick Members`, `Ban Members`, `Moderate Members`, `Send Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Manage Messages`
+   - Bot Permissions: tick `Kick Members`, `Ban Members`, `Moderate Members`, `Send Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Manage Messages`, `Manage Channels`, `Manage Roles`
 6. Copy the generated URL at the bottom and open it in your browser to invite the bot to your server
 
 ---
@@ -156,11 +156,37 @@ All mod actions post an embed to your configured log channel.
 |---|---|---|
 | `/kick @user [reason]` | Kick Members | Kick a member |
 | `/ban @user [reason]` | Ban Members | Ban a member |
+| `/softban @user [reason]` | Ban Members | Ban + immediately unban — wipes their recent messages, they can rejoin |
+| `/tempban @user [duration] [reason]` | Ban Members | Ban for a set number of minutes, then auto-unban |
 | `/mute @user [duration] [reason]` | Moderate Members | Timeout a member (1 min – 28 days) |
 | `/unmute @user` | Moderate Members | Remove a timeout |
-| `/warn @user [reason]` | Moderate Members | Warn a member — DMs them the reason |
+| `/warn @user [reason]` | Moderate Members | Warn a member — DMs them, tracks a running count, can auto-punish |
+| `/warnings @user` | Moderate Members | View a member's full warning history |
+| `/delwarning [id]` | Moderate Members | Remove one warning by ID |
+| `/setwarnpunish [threshold] [action]` | Admin | Auto-mute/kick/ban once a member hits N warnings (0 = off) |
+| `/purge [amount] [user?]` | Manage Messages | Bulk-delete recent messages, optionally from one user |
+| `/slowmode [seconds] [channel?]` | Manage Channels | Set slowmode (0 = off, max 6h) |
+| `/lock [channel?] [reason?]` | Manage Channels | Stop everyone posting in a channel |
+| `/unlock [channel?]` | Manage Channels | Restore posting in a locked channel |
 | `/setlogchannel #channel` | Admin | Set the mod log channel |
 | `/logchannel` | Admin | Show the current log channel |
+| `/sync` | Admin | Force-refresh the bot's channel/role cache from Discord |
+
+> **If the bot was invited before this update:** `/lock`, `/unlock`, and `/slowmode` need the bot to hold **Manage Channels** and **Manage Roles** in your server, which the original invite didn't request. Fastest fix — no re-invite needed: Server Settings → Roles → the bot's role → toggle on Manage Channels and Manage Roles.
+
+---
+
+### 🛡️ Automod
+
+Auto-deletes messages that trip a filter and logs them to the mod log channel. All filters are off by default and configured per-server.
+
+| Command | Description |
+|---|---|
+| `/automod status` | Show current filter settings |
+| `/automod bannedword-add / bannedword-remove [word]` | Manage the banned words/phrases list |
+| `/automod invites [on/off]` | Block Discord invite links |
+| `/automod mentions [max]` | Block messages with more than N mentions (0 = off) |
+| `/automod caps [on/off]` | Block messages that are mostly uppercase |
 
 ---
 
@@ -191,7 +217,7 @@ A web control panel lives at `https://your-bot.onrender.com/dashboard/`. Anyone 
 - GroundZeroAI is in the server, and
 - the logged-in Discord account has **Administrator** there.
 
-It covers server join info, log/rules/welcome/reports/honeypot channels, auto-role, target role, rules (add/remove/post), the trash talk toggle, scheduled messages, and giveaways (create/end/reroll), plus a player-stats lookup. Moderation (`/kick /ban /mute /warn`) stays as slash commands on purpose — those need to happen in the moment.
+It covers server join info, log/rules/welcome/reports/honeypot channels, auto-role, target role, rules (add/remove/post), the trash talk toggle, scheduled messages, giveaways (create/end/reroll), and a player-stats lookup — plus a Moderation tab for purge, slowmode/lock/unlock, softban/tempban, automod filters, and viewing/removing warnings. Quick in-the-moment actions (`/kick /ban /mute`) stay as slash commands on purpose.
 
 ### One-time setup
 

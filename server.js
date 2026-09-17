@@ -286,6 +286,124 @@ app.post('/api/guilds/:guildId/honeypot/warn', requireAuth, requireGuildAdmin, a
   res.json({ ok });
 });
 
+// ─── API: warnings ───────────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/warnings/:userId', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getWarnings(req.params.guildId, req.params.userId));
+});
+
+app.delete('/api/guilds/:guildId/warnings/:id', requireAuth, requireGuildAdmin, async (req, res) => {
+  await db.removeWarning(parseInt(req.params.id, 10), req.params.guildId);
+  res.json({ ok: true });
+});
+
+app.get('/api/guilds/:guildId/warnpunish', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getWarnPunishConfig(req.params.guildId));
+});
+
+app.put('/api/guilds/:guildId/warnpunish', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { threshold, punishment, muteMinutes } = req.body ?? {};
+  await db.setWarnPunishConfig(req.params.guildId, {
+    threshold: threshold || null,
+    punishment: threshold ? (punishment || null) : null,
+    muteMinutes: muteMinutes || 60,
+  });
+  res.json({ ok: true });
+});
+
+// ─── API: automod ────────────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/automod', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getAutomodConfig(req.params.guildId));
+});
+
+app.put('/api/guilds/:guildId/automod', requireAuth, requireGuildAdmin, async (req, res) => {
+  const body = req.body ?? {};
+  const patch = {};
+  if ('bannedWords' in body) patch.bannedWords = body.bannedWords;
+  if ('blockInvites' in body) patch.blockInvites = !!body.blockInvites;
+  if ('maxMentions' in body) patch.maxMentions = body.maxMentions || null;
+  if ('blockCaps' in body) patch.blockCaps = !!body.blockCaps;
+  await db.setAutomodConfig(req.params.guildId, patch);
+  res.json({ ok: true });
+});
+
+// ─── API: moderation actions ──────────────────────────────────────────────────
+
+app.post('/api/guilds/:guildId/moderation/purge', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { channelId, amount, userId } = req.body ?? {};
+  const channel = req.gzGuild.channels.cache.get(channelId);
+  if (!channel) return res.status(404).json({ error: 'Channel not found.' });
+  try {
+    const deleted = await actions.purgeMessages(channel, amount, userId || null);
+    res.json({ ok: true, deleted });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/guilds/:guildId/moderation/slowmode', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { channelId, seconds } = req.body ?? {};
+  const channel = req.gzGuild.channels.cache.get(channelId);
+  if (!channel) return res.status(404).json({ error: 'Channel not found.' });
+  try {
+    await actions.setSlowmode(channel, parseInt(seconds, 10) || 0);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/guilds/:guildId/moderation/lock', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { channelId, reason } = req.body ?? {};
+  const channel = req.gzGuild.channels.cache.get(channelId);
+  if (!channel) return res.status(404).json({ error: 'Channel not found.' });
+  try {
+    await actions.lockChannel(channel, reason || `Locked from dashboard by ${req.gzSession.username}`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/guilds/:guildId/moderation/unlock', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { channelId } = req.body ?? {};
+  const channel = req.gzGuild.channels.cache.get(channelId);
+  if (!channel) return res.status(404).json({ error: 'Channel not found.' });
+  try {
+    await actions.unlockChannel(channel, `Unlocked from dashboard by ${req.gzSession.username}`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/guilds/:guildId/moderation/softban', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { userId, reason } = req.body ?? {};
+  if (!userId) return res.status(400).json({ error: 'userId is required.' });
+  try {
+    await actions.softban(req.gzGuild, userId, reason || 'No reason provided');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/guilds/:guildId/moderation/tempban', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { userId, durationMins, reason } = req.body ?? {};
+  if (!userId || !durationMins) return res.status(400).json({ error: 'userId and durationMins are required.' });
+  try {
+    await actions.tempBan(req.gzGuild, userId, reason || 'No reason provided', parseInt(durationMins, 10));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/guilds/:guildId/moderation/tempbans', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getActiveTempBans(req.params.guildId));
+});
+
 // ─── API: rules ──────────────────────────────────────────────────────────────
 
 app.get('/api/guilds/:guildId/rules', requireAuth, requireGuildAdmin, async (req, res) => {
