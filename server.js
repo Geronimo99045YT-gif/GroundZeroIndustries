@@ -329,6 +329,51 @@ app.put('/api/guilds/:guildId/automod', requireAuth, requireGuildAdmin, async (r
   res.json({ ok: true });
 });
 
+// ─── API: economy ────────────────────────────────────────────────────────────
+
+app.get('/api/guilds/:guildId/economy/config', requireAuth, requireGuildAdmin, async (req, res) => {
+  const [economy, killfeedChannel] = await Promise.all([
+    db.getEconomyConfig(req.params.guildId),
+    db.getKillfeedChannel(req.params.guildId),
+  ]);
+  res.json({ ...economy, killfeedChannel });
+});
+
+app.put('/api/guilds/:guildId/economy/config', requireAuth, requireGuildAdmin, async (req, res) => {
+  const body = req.body ?? {};
+  const jobs = [];
+  const { killfeedChannel, ...economyFields } = body;
+  if (Object.keys(economyFields).length > 0) jobs.push(db.setEconomyConfig(req.params.guildId, economyFields));
+  if ('killfeedChannel' in body) jobs.push(db.setKillfeedChannel(req.params.guildId, killfeedChannel || null));
+  await Promise.all(jobs);
+  res.json({ ok: true });
+});
+
+app.get('/api/guilds/:guildId/economy/leaderboard', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getLeaderboard(req.params.guildId, 25));
+});
+
+app.get('/api/guilds/:guildId/economy/transactions', requireAuth, requireGuildAdmin, async (req, res) => {
+  res.json(await db.getTransactions(req.params.guildId, 50));
+});
+
+app.post('/api/guilds/:guildId/economy/grant', requireAuth, requireGuildAdmin, async (req, res) => {
+  const { userId, amount, reason } = req.body ?? {};
+  if (!userId || !amount) return res.status(400).json({ error: 'userId and amount are required.' });
+  const newBalance = await actions.adminAdjustBalance(req.params.guildId, userId, parseInt(amount, 10), req.gzSession.id, reason || null);
+  res.json({ ok: true, newBalance });
+});
+
+app.get('/api/guilds/:guildId/economy/link/:userId', requireAuth, requireGuildAdmin, async (req, res) => {
+  const link = await db.getLinkByUser(req.params.guildId, req.params.userId);
+  res.json(link);
+});
+
+app.delete('/api/guilds/:guildId/economy/link/:userId', requireAuth, requireGuildAdmin, async (req, res) => {
+  await db.removeLink(req.params.guildId, req.params.userId);
+  res.json({ ok: true });
+});
+
 // ─── API: moderation actions ──────────────────────────────────────────────────
 
 app.post('/api/guilds/:guildId/moderation/purge', requireAuth, requireGuildAdmin, async (req, res) => {

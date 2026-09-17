@@ -191,6 +191,24 @@ Auto-deletes messages that trip a filter and logs them to the mod log channel. A
 
 ---
 
+### 💰 Economy & Linking
+
+Requires FTP set up (see below) — earnings are pulled from the real `.ADM` server log, not self-reported. A background job scans for new log activity every 3 minutes.
+
+| Command | Description |
+|---|---|
+| `/link [name]` | Link your Discord to your in-game name — verified by checking recent server logs for that name actually connecting |
+| `/unlink` | Remove your link |
+| `/linked [user?]` | Check a user's linked in-game name |
+| `/balance [user?]` | Check a balance |
+| `/pay [user] [amount]` | Pay another player |
+| `/addmoney` / `/removemoney` | Admin: give or take money, with a reason |
+| `/setkillfeedchannel` / `/killfeedchannel` | Set or view where DayZ kills get posted |
+
+Players earn automatically for: DayZ kills, DayZ playtime (10-minute increments), and Discord chat activity (rate-limited). All reward amounts, the currency name, and the killfeed channel are configurable in the dashboard's **Economy** tab, which also shows a leaderboard, transaction history, and a give/take-money tool.
+
+---
+
 ### 🎲 Utility
 
 | Command | Description |
@@ -220,7 +238,7 @@ A web control panel lives at `https://your-bot.onrender.com/dashboard/`. Anyone 
 
 It's split into two sections:
 
-- **Discord Management** — everything about the bot and community: channels/roles, rules, moderation (purge, slowmode/lock/unlock, softban/tempban, automod filters, warnings), trash talk, scheduled messages, giveaways, player stats.
+- **Discord Management** — everything about the bot and community: channels/roles, rules, moderation (purge, slowmode/lock/unlock, softban/tempban, automod filters, warnings), trash talk, scheduled messages, giveaways, player stats, and the economy (settings, leaderboard, transactions, give/take money, link lookup).
 - **Server Management** — the actual DayZ game server, over FTP: server join info, a parsed activity log (connects, disconnects, kills — read from the `.ADM` admin log), a file browser for the server's FTP files (view and edit text files), and a ban list editor. Requires the `FTP_*` env vars below; without them this section shows a setup notice instead of erroring.
 
 Quick in-the-moment moderation actions (`/kick /ban /mute`) stay as slash commands on purpose.

@@ -685,6 +685,101 @@ document.getElementById('addBanForm').addEventListener('submit', async e => {
   catch (err) { flash('bansMsg', err.message, 'error'); }
 });
 
+// ─── Economy ────────────────────────────────────────────────────────────────
+
+async function loadEconomyConfig() {
+  const cfg = await api(`/api/guilds/${guildId}/economy/config`);
+  const f = document.getElementById('economyConfigForm');
+  f.currencyName.value = cfg.currencyName;
+  f.killReward.value = cfg.killReward;
+  f.playtimeRate.value = cfg.playtimeRate;
+  f.chatReward.value = cfg.chatReward;
+  f.chatCooldownSec.value = cfg.chatCooldownSec;
+  f.killfeedChannel.innerHTML = channelOptions(cfg.killfeedChannel);
+}
+document.getElementById('economyConfigForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    await api(`/api/guilds/${guildId}/economy/config`, {
+      method: 'PUT',
+      body: {
+        currencyName: fd.get('currencyName'),
+        killReward: parseInt(fd.get('killReward'), 10),
+        playtimeRate: parseInt(fd.get('playtimeRate'), 10),
+        chatReward: parseInt(fd.get('chatReward'), 10),
+        chatCooldownSec: parseInt(fd.get('chatCooldownSec'), 10),
+        killfeedChannel: fd.get('killfeedChannel') || null,
+      },
+    });
+    flash('economyConfigMsg', 'Saved.');
+  } catch (err) { flash('economyConfigMsg', err.message, 'error'); }
+});
+
+document.getElementById('grantForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  try {
+    const r = await api(`/api/guilds/${guildId}/economy/grant`, {
+      method: 'POST',
+      body: { userId: fd.get('userId'), amount: fd.get('amount'), reason: fd.get('reason') },
+    });
+    e.target.reset();
+    flash('grantMsg', `Done — new balance: ${r.newBalance}.`);
+    loadLeaderboard();
+    loadTransactions();
+  } catch (err) { flash('grantMsg', err.message, 'error'); }
+});
+
+async function loadLeaderboard() {
+  const list = await api(`/api/guilds/${guildId}/economy/leaderboard`);
+  const el = document.getElementById('economyLeaderboard');
+  if (list.length === 0) { el.innerHTML = `<p class="muted">No balances yet.</p>`; return; }
+  el.innerHTML = list.map((row, i) => `
+    <div class="list-item">
+      <span>#${i + 1} — ${escapeHtml(row.user_id)}</span>
+      <span class="meta">${row.balance.toLocaleString()}</span>
+    </div>
+  `).join('');
+}
+
+async function loadTransactions() {
+  const list = await api(`/api/guilds/${guildId}/economy/transactions`);
+  const el = document.getElementById('economyTransactions');
+  if (list.length === 0) { el.innerHTML = `<p class="muted">No transactions yet.</p>`; return; }
+  el.innerHTML = list.map(t => `
+    <div class="list-item">
+      <div>
+        <div>${t.from_user_id ? `${escapeHtml(t.from_user_id)} → ` : ''}${escapeHtml(t.to_user_id)}: ${t.amount > 0 ? '+' : ''}${t.amount.toLocaleString()}</div>
+        <div class="meta">${escapeHtml(t.type)}${t.reason ? ` · ${escapeHtml(t.reason)}` : ''} · ${timeAgo(t.created_at)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('linkLookupForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const userId = new FormData(e.target).get('userId').trim();
+  const el = document.getElementById('linkLookupResult');
+  el.innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    const link = await api(`/api/guilds/${guildId}/economy/link/${userId}`);
+    el.innerHTML = link
+      ? `<div class="list-item"><span>Linked to <strong>${escapeHtml(link.ign)}</strong></span>
+          <div class="actions"><button class="danger" data-user="${escapeHtml(userId)}" onclick="removeLinkLookup(this.dataset.user)">Remove Link</button></div>
+        </div>`
+      : `<p class="muted">Not linked.</p>`;
+  } catch (err) {
+    el.innerHTML = `<p class="msg error">${escapeHtml(err.message)}</p>`;
+  }
+});
+async function removeLinkLookup(userId) {
+  try {
+    await api(`/api/guilds/${guildId}/economy/link/${userId}`, { method: 'DELETE' });
+    document.getElementById('linkLookupResult').innerHTML = `<p class="muted">Not linked.</p>`;
+  } catch (err) { alert(err.message); }
+}
+
 // ─── Init ──────────────────────────────────────────────────────────────────
 
 (async function init() {
@@ -719,6 +814,9 @@ document.getElementById('addBanForm').addEventListener('submit', async e => {
     loadAutomod();
     loadTempbans();
     loadDayzStatus();
+    loadEconomyConfig();
+    loadLeaderboard();
+    loadTransactions();
   } catch (err) {
     if (err.status === 401) { window.location.href = 'index.html'; return; }
     document.getElementById('loading').hidden = true;

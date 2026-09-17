@@ -83,6 +83,20 @@ async function readTextTail(path, maxBytes = 200_000) {
   });
 }
 
+// Reads from an exact byte offset to the end — for the economy/killfeed poller,
+// which needs to pick up exactly where it left off last time (no re-processing,
+// no gaps). Unlike readTextTail this never trims a leading partial line, since
+// the caller is expected to pass an offset that was itself a clean line boundary.
+async function readFrom(path, startByte) {
+  return withClient(async (client) => {
+    const size = await client.size(path);
+    if (startByte >= size) return { text: '', newOffset: size };
+    const { writable, buffer } = collector();
+    await client.downloadTo(writable, path, startByte);
+    return { text: buffer().toString('utf8'), newOffset: size };
+  });
+}
+
 async function writeText(path, content) {
   return withClient(async (client) => {
     await client.uploadFrom(Readable.from(Buffer.from(content, 'utf8')), path);
@@ -113,10 +127,23 @@ async function findLatestAdmLog(profilesPath) {
 const ADM_PATTERNS = [
   { type: 'connect',    re: /Player "([^"]+)"[^)]*\) is connected/i },
   { type: 'disconnect', re: /Player "([^"]+)"[^)]*\) has been disconnected/i },
-  { type: 'death',      re: /Player "([^"]+)"\(DEAD\)/i },
-  { type: 'kill',       re: /hit by Player "([^"]+)".*?into ([\w\s]+?) for ([\d.]+) damage/i },
+  { type: 'death',      re: /Player "([^"]+)"\s*\(DEAD\)/i },
+  { type: 'hit',        re: /hit by Player "([^"]+)".*?into ([\w\s]+?)\(?\d*\)?\s+for ([\d.]+) damage/i },
   { type: 'chat',       re: /"([^"]+)" \(.*?\): (.+)$/i },
 ];
+
+// Dedicated PvP-fatal-kill extractor (for economy crediting + killfeed posting,
+// and to tag these lines distinctly in the Activity Log) — needs both names
+// plus weapon/distance in one shot, which the generic patterns above don't do.
+// Confirmed against a real server line:
+// Player "V" (DEAD) (id=... pos=<...>) killed by Player "K" (id=... pos=<...>) with M70 Tundra from 110.053 meters
+const FATAL_KILL_RE = /Player "([^"]+)".*?killed by Player "([^"]+)"(?:\s*\([^)]*\))?(?:\s+with\s+(.+?))?(?:\s+from\s+([\d.]+)\s*meters)?\s*$/i;
+
+function extractFatalKill(line) {
+  const m = line.match(FATAL_KILL_RE);
+  if (!m) return null;
+  return { victim: m[1], killer: m[2], weapon: m[3] || null, distance: m[4] || null };
+}
 
 function parseAdmLog(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -126,6 +153,9 @@ function parseAdmLog(text) {
     const time = timeMatch ? timeMatch[1] : null;
     const rest = timeMatch ? timeMatch[2] : line;
     if (/^AdminLog started/i.test(line)) { events.push({ time, type: 'session', raw: rest }); continue; }
+
+    const kill = extractFatalKill(rest);
+    if (kill) { events.push({ time, type: 'kill', raw: rest, match: [kill.victim, kill.killer, kill.weapon, kill.distance] }); continue; }
 
     let matched = false;
     for (const { type, re } of ADM_PATTERNS) {
@@ -140,6 +170,6 @@ function parseAdmLog(text) {
 module.exports = {
   isConfigured,
   listDir,
-  readTextFull, readTextTail, writeText, getFileSize,
-  findLatestAdmLog, parseAdmLog,
+  readTextFull, readTextTail, readFrom, writeText, getFileSize,
+  findLatestAdmLog, parseAdmLog, extractFatalKill,
 };

@@ -57,6 +57,8 @@ const {
   getRules, addRule, removeRule,
   getWarnPunishConfig, setWarnPunishConfig,
   getAutomodConfig, setAutomodConfig,
+  getKillfeedChannel, setKillfeedChannel,
+  getEconomyConfig, getBalance, getLinkByUser,
   DAY_NAMES, getSchedules,
   createGiveaway, getActiveGiveaways, getGiveawayEntries,
   getPlayerStats, savePlayerStats,
@@ -166,6 +168,10 @@ setInterval(checkGiveaways, 30 * 1000);
 
 // Check for expired temp-bans every 60 seconds
 setInterval(() => { actions.checkTempBans().catch(() => {}); }, 60 * 1000);
+
+// Scan the DayZ ADM log for new kills/playtime (economy) and killfeed posts.
+// No-ops per guild if FTP isn't configured or no profiles path is set.
+setInterval(() => { actions.scanAllDayzActivity().catch(() => {}); }, 3 * 60 * 1000);
 
 // ─── Ground Zero POI Data ────────────────────────────────────────────────────
 
@@ -963,6 +969,64 @@ const commands = [
       .addIntegerOption(o => o.setName('max').setDescription('Max mentions allowed (0 = disable filter)').setRequired(true).setMinValue(0)))
     .addSubcommand(sub => sub.setName('caps').setDescription('Block excessive-caps messages')
       .addBooleanOption(o => o.setName('enabled').setDescription('On or off').setRequired(true))),
+
+  // ── Economy ──────────────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('balance')
+    .setDescription('Check your (or someone else\'s) balance')
+    .addUserOption(o => o.setName('user').setDescription('Check someone else\'s balance')),
+
+  new SlashCommandBuilder()
+    .setName('pay')
+    .setDescription('Pay another player')
+    .addUserOption(o => o.setName('user').setDescription('Who to pay').setRequired(true))
+    .addIntegerOption(o => o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1)),
+
+  new SlashCommandBuilder()
+    .setName('addmoney')
+    .setDescription('Give a player money')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption(o => o.setName('user').setDescription('User').setRequired(true))
+    .addIntegerOption(o => o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1))
+    .addStringOption(o => o.setName('reason').setDescription('Reason')),
+
+  new SlashCommandBuilder()
+    .setName('removemoney')
+    .setDescription('Take money from a player')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption(o => o.setName('user').setDescription('User').setRequired(true))
+    .addIntegerOption(o => o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1))
+    .addStringOption(o => o.setName('reason').setDescription('Reason')),
+
+  // ── Linking ──────────────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('link')
+    .setDescription('Link your Discord account to your in-game name')
+    .addStringOption(o => o.setName('username').setDescription('Your exact in-game name').setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('unlink')
+    .setDescription('Remove your in-game name link'),
+
+  new SlashCommandBuilder()
+    .setName('linked')
+    .setDescription("Check a user's linked in-game name")
+    .addUserOption(o => o.setName('user').setDescription('User to check')),
+
+  // ── Killfeed ─────────────────────────────────────────────────────────────
+
+  new SlashCommandBuilder()
+    .setName('setkillfeedchannel')
+    .setDescription('Set the channel where DayZ kills get posted')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addChannelOption(o => o.setName('channel').setDescription('Killfeed channel').addChannelTypes(ChannelType.GuildText).setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('killfeedchannel')
+    .setDescription('Show the current killfeed channel')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
 ].map(c => c.toJSON());
 
@@ -2147,6 +2211,74 @@ React with 🎉 to enter!`)
       await setAutomodConfig(guild.id, { blockCaps: enabled });
       await interaction.reply({ content: `Excessive-caps filter is now **${enabled ? 'ON' : 'OFF'}**.`, ephemeral: true });
     }
+
+  // /balance
+  } else if (commandName === 'balance') {
+    const target = interaction.options.getUser('user') ?? user;
+    const [bal, econCfg] = await Promise.all([getBalance(guild.id, target.id), getEconomyConfig(guild.id)]);
+    await interaction.reply({
+      content: `💰 ${target.id === user.id ? 'You have' : `${target.username} has`} **${bal.toLocaleString()} ${econCfg.currencyName}**.`,
+      ephemeral: target.id === user.id,
+    });
+
+  // /pay
+  } else if (commandName === 'pay') {
+    const target = interaction.options.getUser('user');
+    const amount = interaction.options.getInteger('amount');
+    const result = await actions.payUser(guild.id, user.id, target.id, amount);
+    if (!result.ok) { await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true }); return; }
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply(`💸 <@${user.id}> paid <@${target.id}> **${amount.toLocaleString()} ${econCfg.currencyName}**.`);
+
+  // /addmoney
+  } else if (commandName === 'addmoney') {
+    const target = interaction.options.getUser('user');
+    const amount = interaction.options.getInteger('amount');
+    const reason = interaction.options.getString('reason') ?? 'No reason provided';
+    const newBalance = await actions.adminAdjustBalance(guild.id, target.id, amount, user.id, reason);
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply({ content: `✅ Gave <@${target.id}> **${amount.toLocaleString()} ${econCfg.currencyName}** (new balance: ${newBalance.toLocaleString()}).`, ephemeral: true });
+
+  // /removemoney
+  } else if (commandName === 'removemoney') {
+    const target = interaction.options.getUser('user');
+    const amount = interaction.options.getInteger('amount');
+    const reason = interaction.options.getString('reason') ?? 'No reason provided';
+    const newBalance = await actions.adminAdjustBalance(guild.id, target.id, -amount, user.id, reason);
+    const econCfg = await getEconomyConfig(guild.id);
+    await interaction.reply({ content: `✅ Removed **${amount.toLocaleString()} ${econCfg.currencyName}** from <@${target.id}> (new balance: ${newBalance.toLocaleString()}).`, ephemeral: true });
+
+  // /link
+  } else if (commandName === 'link') {
+    const username = interaction.options.getString('username').trim();
+    await interaction.deferReply({ ephemeral: true });
+    const result = await actions.linkPlayer(guild.id, user.id, username);
+    await interaction.editReply({ content: result.ok ? `✅ Linked to **${username}**.` : `❌ ${result.error}` });
+
+  // /unlink
+  } else if (commandName === 'unlink') {
+    await actions.unlinkPlayer(guild.id, user.id);
+    await interaction.reply({ content: '✅ Unlinked.', ephemeral: true });
+
+  // /linked
+  } else if (commandName === 'linked') {
+    const target = interaction.options.getUser('user') ?? user;
+    const link = await getLinkByUser(guild.id, target.id);
+    await interaction.reply({
+      content: link ? `<@${target.id}> is linked to **${link.ign}**.` : `<@${target.id}> isn't linked yet.`,
+      ephemeral: true,
+    });
+
+  // /setkillfeedchannel
+  } else if (commandName === 'setkillfeedchannel') {
+    const channel = interaction.options.getChannel('channel');
+    await setKillfeedChannel(guild.id, channel.id);
+    await interaction.reply({ content: `✅ Killfeed channel set to ${channel}.`, ephemeral: true });
+
+  // /killfeedchannel
+  } else if (commandName === 'killfeedchannel') {
+    const id = await getKillfeedChannel(guild.id);
+    await interaction.reply({ content: id ? `Killfeed channel: <#${id}>` : 'No killfeed channel set. Use /setkillfeedchannel.', ephemeral: true });
   }
 });
 
@@ -2511,6 +2643,9 @@ const chatHistory = new Map(); // channelId -> [{role, content}]
 const activeTargets = new Map();
 const MAX_HISTORY = 10; // keep last 10 exchanges
 
+// Chat-earning cooldown: `${guildId}:${userId}` -> ms timestamp of last award
+const chatEarnCooldown = new Map();
+
 function getChatHistory(channelId) {
   if (!chatHistory.has(channelId)) chatHistory.set(channelId, []);
   return chatHistory.get(channelId);
@@ -2726,6 +2861,17 @@ client.on('messageCreate', async message => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     const hour = new Date().getUTCHours().toString();
     bufferMessage(guildId, authorId, message.author.username, message.channel.id, text, hour);
+  }
+
+  // ── Chat-activity economy earning (cooldown gated) ────────────────────────
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    const cooldownKey = `${guildId}:${authorId}`;
+    const econCfg = await getEconomyConfig(guildId);
+    const lastEarn = chatEarnCooldown.get(cooldownKey) ?? 0;
+    if (econCfg.chatReward > 0 && Date.now() - lastEarn >= econCfg.chatCooldownSec * 1000) {
+      chatEarnCooldown.set(cooldownKey, Date.now());
+      actions.creditEarning(guildId, authorId, econCfg.chatReward, 'earn_chat').catch(() => {});
+    }
   }
 
   // ── Join keyword auto-reply ──────────────────────────────────────────────

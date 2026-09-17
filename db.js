@@ -285,6 +285,102 @@ async function markGiveawayEnded(gw) {
   return sbRequest('POST', '/rest/v1/giveaways', { ...gw, ended: true });
 }
 
+// ─── Economy config ──────────────────────────────────────────────────────────
+
+async function getEconomyConfig(guildId) {
+  const c = await getGuildConfig(guildId);
+  return {
+    currencyName: c.economy_currency_name ?? 'Scrap',
+    killReward: c.economy_kill_reward ?? 50,
+    playtimeRate: c.economy_playtime_rate ?? 5,
+    chatReward: c.economy_chat_reward ?? 1,
+    chatCooldownSec: c.economy_chat_cooldown_sec ?? 60,
+  };
+}
+
+async function setEconomyConfig(guildId, updates) {
+  const patch = {};
+  if ('currencyName' in updates) patch.economy_currency_name = updates.currencyName;
+  if ('killReward' in updates) patch.economy_kill_reward = updates.killReward;
+  if ('playtimeRate' in updates) patch.economy_playtime_rate = updates.playtimeRate;
+  if ('chatReward' in updates) patch.economy_chat_reward = updates.chatReward;
+  if ('chatCooldownSec' in updates) patch.economy_chat_cooldown_sec = updates.chatCooldownSec;
+  await saveGuildConfig(guildId, patch);
+}
+
+async function getKillfeedChannel(guildId)    { return (await getGuildConfig(guildId)).killfeed_channel_id ?? null; }
+async function setKillfeedChannel(guildId, v) { await saveGuildConfig(guildId, { killfeed_channel_id: v }); }
+
+// Tracks how far into the current ADM log the economy/killfeed poller has read,
+// so it only ever processes new lines (never double-credits or double-posts).
+async function getDayzScanState(guildId) {
+  const c = await getGuildConfig(guildId);
+  return { log: c.dayz_scan_log ?? null, offset: c.dayz_scan_offset ?? 0 };
+}
+async function setDayzScanState(guildId, log, offset) {
+  await saveGuildConfig(guildId, { dayz_scan_log: log, dayz_scan_offset: offset });
+}
+
+// Open DayZ sessions (in-game name -> ISO connect time) so playtime can be
+// credited even when a session's connect and disconnect land in different polls.
+async function getOpenSessions(guildId) {
+  const c = await getGuildConfig(guildId);
+  return c.dayz_open_sessions ?? {};
+}
+async function setOpenSessions(guildId, sessions) {
+  await saveGuildConfig(guildId, { dayz_open_sessions: sessions });
+}
+
+// ─── Economy (balances & transactions) ─────────────────────────────────────────
+
+async function getBalance(guildId, userId) {
+  const rows = await sbRequest('GET', `/rest/v1/player_economy?guild_id=eq.${guildId}&user_id=eq.${userId}&limit=1`);
+  return Array.isArray(rows) && rows[0] ? rows[0].balance : 0;
+}
+
+// Not atomic (read-modify-write over REST) — acceptable for this use case; a rare
+// concurrent double-spend on a hobby server economy isn't worth a stored procedure.
+async function adjustBalance(guildId, userId, delta) {
+  const current = await getBalance(guildId, userId);
+  const next = current + delta;
+  await sbRequest('POST', '/rest/v1/player_economy', { guild_id: guildId, user_id: userId, balance: next, updated_at: new Date().toISOString() });
+  return next;
+}
+
+async function recordTransaction(guildId, { fromUserId = null, toUserId, amount, type, reason = null }) {
+  return sbRequest('POST', '/rest/v1/economy_transactions', { guild_id: guildId, from_user_id: fromUserId, to_user_id: toUserId, amount, type, reason });
+}
+
+async function getTransactions(guildId, limit = 50) {
+  const rows = await sbRequest('GET', `/rest/v1/economy_transactions?guild_id=eq.${guildId}&order=created_at.desc&limit=${limit}`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function getLeaderboard(guildId, limit = 10) {
+  const rows = await sbRequest('GET', `/rest/v1/player_economy?guild_id=eq.${guildId}&order=balance.desc&limit=${limit}`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+// ─── Player links (Discord <-> in-game name) ───────────────────────────────────
+
+async function getLinkByUser(guildId, userId) {
+  const rows = await sbRequest('GET', `/rest/v1/player_links?guild_id=eq.${guildId}&user_id=eq.${userId}&limit=1`);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function getLinkByIgn(guildId, ign) {
+  const rows = await sbRequest('GET', `/rest/v1/player_links?guild_id=eq.${guildId}&ign_lower=eq.${encodeURIComponent(ign.toLowerCase())}&limit=1`);
+  return Array.isArray(rows) ? rows[0] ?? null : null;
+}
+
+async function createLink(guildId, userId, ign) {
+  return sbRequest('POST', '/rest/v1/player_links', { guild_id: guildId, user_id: userId, ign, ign_lower: ign.toLowerCase() });
+}
+
+async function removeLink(guildId, userId) {
+  return sbRequest('DELETE', `/rest/v1/player_links?guild_id=eq.${guildId}&user_id=eq.${userId}`);
+}
+
 // ─── Player stats data ─────────────────────────────────────────────────────────
 
 async function getPlayerStats(guildId, userId) {
@@ -325,4 +421,10 @@ module.exports = {
   createGiveaway, getActiveGiveaways, getGiveawayEntries,
   getGiveawayById, getGiveawayByMessageId, markGiveawayEnded,
   getPlayerStats, getTopPlayerStats, savePlayerStats,
+  getEconomyConfig, setEconomyConfig,
+  getKillfeedChannel, setKillfeedChannel,
+  getDayzScanState, setDayzScanState,
+  getOpenSessions, setOpenSessions,
+  getBalance, adjustBalance, recordTransaction, getTransactions, getLeaderboard,
+  getLinkByUser, getLinkByIgn, createLink, removeLink,
 };

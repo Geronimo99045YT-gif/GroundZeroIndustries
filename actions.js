@@ -8,6 +8,7 @@ const fs    = require('fs');
 const path  = require('path');
 const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const db = require('./db');
+const dayzFtp = require('./ftp');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY ?? null;
 
@@ -408,6 +409,166 @@ async function checkTempBans() {
   }
 }
 
+// ─── Economy ────────────────────────────────────────────────────────────────
+
+async function payUser(guildId, fromUserId, toUserId, amount) {
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, error: 'Amount must be a positive number.' };
+  if (fromUserId === toUserId) return { ok: false, error: "You can't pay yourself." };
+  const balance = await db.getBalance(guildId, fromUserId);
+  if (balance < amount) return { ok: false, error: `Insufficient balance (you have ${balance}).` };
+  await db.adjustBalance(guildId, fromUserId, -amount);
+  await db.adjustBalance(guildId, toUserId, amount);
+  await db.recordTransaction(guildId, { fromUserId, toUserId, amount, type: 'pay' });
+  return { ok: true };
+}
+
+async function adminAdjustBalance(guildId, userId, amount, moderatorId, reason) {
+  const newBalance = await db.adjustBalance(guildId, userId, amount);
+  await db.recordTransaction(guildId, { fromUserId: moderatorId, toUserId: userId, amount, type: amount >= 0 ? 'admin_grant' : 'admin_remove', reason });
+  return newBalance;
+}
+
+async function creditEarning(guildId, userId, amount, type) {
+  if (amount <= 0) return;
+  await db.adjustBalance(guildId, userId, amount);
+  await db.recordTransaction(guildId, { toUserId: userId, amount, type });
+}
+
+// ─── Linking (Discord <-> in-game name, verified via the ADM log) ─────────────
+
+// Checks the last few ADM logs (not just the current one) for a connect event
+// matching this exact name, so someone who played yesterday still counts.
+async function findPlayerInLogs(profilesPath, ign) {
+  const entries = await dayzFtp.listDir(profilesPath);
+  const admFiles = entries
+    .filter(e => !e.isDirectory && /\.adm$/i.test(e.name))
+    .sort((a, b) => (b.modifiedAt ? new Date(b.modifiedAt) : 0) - (a.modifiedAt ? new Date(a.modifiedAt) : 0))
+    .slice(0, 3);
+  const target = ign.toLowerCase();
+  for (const file of admFiles) {
+    const filePath = profilesPath.replace(/\/$/, '') + '/' + file.name;
+    const { text } = await dayzFtp.readTextFull(filePath, 2_000_000);
+    const events = dayzFtp.parseAdmLog(text);
+    if (events.some(e => e.type === 'connect' && e.match?.[0]?.toLowerCase() === target)) return true;
+  }
+  return false;
+}
+
+async function linkPlayer(guildId, userId, ign) {
+  const existing = await db.getLinkByUser(guildId, userId);
+  if (existing) return { ok: false, error: `You're already linked to **${existing.ign}** — use /unlink first if that's wrong.` };
+
+  const claimedBy = await db.getLinkByIgn(guildId, ign);
+  if (claimedBy) return { ok: false, error: 'That username is already linked to someone else.' };
+
+  const profilesPath = await db.getDayzProfilesPath(guildId);
+  if (!profilesPath || !dayzFtp.isConfigured()) {
+    return { ok: false, error: 'Server linking is not set up yet — an admin needs to configure FTP and a profiles path first.' };
+  }
+
+  let found;
+  try {
+    found = await findPlayerInLogs(profilesPath, ign);
+  } catch (err) {
+    console.error('linkPlayer: FTP lookup failed —', err.message);
+    return { ok: false, error: `Couldn't reach the game server right now (${err.message}). Try again shortly.` };
+  }
+  if (!found) return { ok: false, error: `Couldn't find "${ign}" in recent server activity. Please play for at least 5 minutes, then try again.` };
+
+  await db.createLink(guildId, userId, ign);
+  return { ok: true };
+}
+
+async function unlinkPlayer(guildId, userId) {
+  await db.removeLink(guildId, userId);
+}
+
+// ─── DayZ activity poller (economy earnings + killfeed) ───────────────────────
+// Combines two features off one shared log scan: crediting kills/playtime to
+// linked players, and posting every PvP kill to a killfeed channel regardless
+// of linking. Runs on an interval from index.js, once per guild.
+
+function timeToday(hhmmss) {
+  if (!hhmmss) return new Date().toISOString();
+  const now = new Date();
+  const [h, m, s] = hhmmss.split(':').map(Number);
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, m, s)).toISOString();
+}
+
+async function scanDayzActivity(guildId) {
+  if (!dayzFtp.isConfigured()) return;
+  const profilesPath = await db.getDayzProfilesPath(guildId);
+  if (!profilesPath) return;
+
+  const latestLogPath = await dayzFtp.findLatestAdmLog(profilesPath);
+  if (!latestLogPath) return;
+
+  const state = await db.getDayzScanState(guildId);
+  if (state.log !== latestLogPath) {
+    // First time seeing this log (fresh setup, or the server restarted and
+    // rotated to a new file) — start watching from here on, don't backfill.
+    const size = await dayzFtp.getFileSize(latestLogPath);
+    await db.setDayzScanState(guildId, latestLogPath, size);
+    return;
+  }
+
+  const { text, newOffset } = await dayzFtp.readFrom(latestLogPath, state.offset);
+  if (!text) return;
+
+  const events = dayzFtp.parseAdmLog(text);
+  if (events.length === 0) { await db.setDayzScanState(guildId, latestLogPath, newOffset); return; }
+
+  const econCfg = await db.getEconomyConfig(guildId);
+  const openSessions = await db.getOpenSessions(guildId);
+  const killfeedChannelId = await db.getKillfeedChannel(guildId);
+  const guild = client?.guilds.cache.get(guildId);
+  const killfeedChannel = killfeedChannelId && guild ? guild.channels.cache.get(killfeedChannelId) : null;
+
+  for (const event of events) {
+    if (event.type === 'connect' && event.match?.[0]) {
+      openSessions[event.match[0]] = timeToday(event.time);
+    } else if (event.type === 'disconnect' && event.match?.[0]) {
+      const name = event.match[0];
+      const startedAt = openSessions[name];
+      if (startedAt) {
+        delete openSessions[name];
+        const minutes = Math.min(Math.max((new Date(timeToday(event.time)) - new Date(startedAt)) / 60000, 0), 720); // cap 12h, floor 0
+        if (minutes >= 1) {
+          const link = await db.getLinkByIgn(guildId, name);
+          const reward = Math.floor(minutes / 10) * econCfg.playtimeRate;
+          if (link && reward > 0) await creditEarning(guildId, link.user_id, reward, 'earn_playtime');
+        }
+      }
+    }
+
+    const kill = dayzFtp.extractFatalKill(event.raw);
+    if (kill) {
+      if (killfeedChannel) {
+        const embed = new EmbedBuilder()
+          .setColor(0xED4245)
+          .setDescription(`💀 **${kill.killer}** killed **${kill.victim}**${kill.weapon ? ` with ${kill.weapon}` : ''}${kill.distance ? ` from ${kill.distance}m` : ''}`)
+          .setTimestamp();
+        killfeedChannel.send({ embeds: [embed] }).catch(() => {});
+      }
+      if (econCfg.killReward > 0) {
+        const killerLink = await db.getLinkByIgn(guildId, kill.killer);
+        if (killerLink) await creditEarning(guildId, killerLink.user_id, econCfg.killReward, 'earn_kill');
+      }
+    }
+  }
+
+  await db.setOpenSessions(guildId, openSessions);
+  await db.setDayzScanState(guildId, latestLogPath, newOffset);
+}
+
+async function scanAllDayzActivity() {
+  if (!client) return;
+  for (const guild of client.guilds.cache.values()) {
+    try { await scanDayzActivity(guild.id); }
+    catch (err) { console.error(`scanDayzActivity failed for guild ${guild.id} —`, err.message); }
+  }
+}
+
 module.exports = {
   setClient,
   buildRulesEmbeds, postRulesToChannel,
@@ -418,4 +579,7 @@ module.exports = {
   recordWarning,
   purgeMessages, setSlowmode, lockChannel, unlockChannel,
   softban, tempBan, checkTempBans,
+  payUser, adminAdjustBalance, creditEarning,
+  linkPlayer, unlinkPlayer,
+  scanDayzActivity, scanAllDayzActivity,
 };

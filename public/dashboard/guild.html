@@ -34,6 +34,7 @@
           <button class="tab-btn" data-tab="schedules">Schedules</button>
           <button class="tab-btn" data-tab="giveaways">Giveaways</button>
           <button class="tab-btn" data-tab="stats">Player Stats</button>
+          <button class="tab-btn" data-tab="economy">Economy</button>
         </div>
       </div>
       <div class="tab-group">
@@ -359,6 +360,55 @@
           <button class="primary" type="submit" style="flex:0 0 auto">Look Up</button>
         </form>
         <div id="statsResult"></div>
+      </div>
+    </div>
+
+    <!-- Economy -->
+    <div class="tab-panel" id="tab-economy">
+      <div class="card">
+        <h2>Economy Settings</h2>
+        <div id="economyConfigMsg" class="msg hidden"></div>
+        <form id="economyConfigForm">
+          <div class="grid cols-2">
+            <div class="field"><label>Currency Name</label><input name="currencyName" placeholder="Scrap" required></div>
+            <div class="field"><label>Killfeed Channel</label><select name="killfeedChannel"></select></div>
+            <div class="field"><label>Reward per Kill</label><input name="killReward" type="number" min="0" required></div>
+            <div class="field"><label>Reward per 10 min Played</label><input name="playtimeRate" type="number" min="0" required></div>
+            <div class="field"><label>Reward per Chat Message</label><input name="chatReward" type="number" min="0" required></div>
+            <div class="field"><label>Chat Reward Cooldown (seconds)</label><input name="chatCooldownSec" type="number" min="1" required></div>
+          </div>
+          <button class="primary" type="submit">Save</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Give / Take Money</h2>
+        <div id="grantMsg" class="msg hidden"></div>
+        <form id="grantForm" class="row">
+          <div class="field"><label>Discord User ID</label><input name="userId" required></div>
+          <div class="field"><label>Amount (negative to remove)</label><input name="amount" type="number" required></div>
+          <div class="field" style="flex:2"><label>Reason</label><input name="reason"></div>
+          <button class="primary" type="submit" style="flex:0 0 auto">Apply</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Leaderboard</h2>
+        <div id="economyLeaderboard" class="muted">Loading…</div>
+      </div>
+
+      <div class="card">
+        <h2>Recent Transactions</h2>
+        <div id="economyTransactions" class="muted">Loading…</div>
+      </div>
+
+      <div class="card">
+        <h2>Player Link Lookup</h2>
+        <form id="linkLookupForm" class="row">
+          <div class="field"><label>Discord User ID</label><input name="userId" required></div>
+          <button class="primary" type="submit" style="flex:0 0 auto">Look Up</button>
+        </form>
+        <div id="linkLookupResult"></div>
       </div>
     </div>
 
