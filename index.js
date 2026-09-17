@@ -2339,7 +2339,9 @@ You are GroundZeroAI, a sharp-tongued Discord bot. Match the energy — calm get
   return new Promise((resolve) => {
     const body = JSON.stringify({
       model: 'openai/gpt-oss-20b',
-      max_tokens: 120,
+      max_completion_tokens: 300,
+      reasoning_effort: 'low',
+      include_reasoning: false,
       messages: [
         {
           role: 'system',
@@ -2429,7 +2431,9 @@ async function generateChatReply(userMessage, channelId, username) {
   return new Promise((resolve) => {
     const body = JSON.stringify({
       model: 'openai/gpt-oss-20b',
-      max_tokens: 100,
+      max_completion_tokens: 300,
+      reasoning_effort: 'low',
+      include_reasoning: false,
       messages,
     });
 

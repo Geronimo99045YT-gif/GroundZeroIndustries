@@ -275,7 +275,9 @@ Return this exact JSON structure:
   return new Promise((resolve) => {
     const body = JSON.stringify({
       model: 'openai/gpt-oss-20b',
-      max_tokens: 250,
+      max_completion_tokens: 500,
+      reasoning_effort: 'low',
+      include_reasoning: false,
       messages: [
         { role: 'system', content: 'You are a Discord community analyst. Return only valid JSON, no markdown, no explanation.' },
         { role: 'user', content: prompt },
